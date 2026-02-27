@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --flame: #FF6B35;
+  --flame-dark: #E55A2B;
+  --gold: #FFD700;
+  --bg-dark: #0d0d15;
+  --bg-card: #14141f;
+  --border: rgba(255, 255, 255, 0.06);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.5);
+  --text-muted: rgba(255, 255, 255, 0.25);
+  --tribe-vatu: #9B59B6;
+  --tribe-kalo: #1ABC9C;
+  --tribe-cila: #E67E22;
+}
+
+body {
+  background: var(--bg-dark);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Card component */
+@layer components {
+  .card {
+    @apply rounded-xl border border-white/[0.06] p-5;
+    background: var(--bg-card);
+  }
+
+  .card-header {
+    @apply flex items-center gap-2 mb-4;
+  }
+
+  .card-title {
+    @apply text-sm font-bold tracking-wider uppercase;
+    color: var(--text-muted);
+  }
+
+  .badge {
+    @apply text-[9px] font-bold px-2 py-0.5 rounded;
+  }
+
+  .badge-active {
+    @apply badge;
+    background: rgba(26, 188, 156, 0.15);
+    color: #1ABC9C;
+  }
+
+  .badge-drowned {
+    @apply badge;
+    background: rgba(231, 76, 60, 0.15);
+    color: #E74C3C;
+  }
+
+  .badge-burnt {
+    @apply badge;
+    background: rgba(149, 165, 166, 0.15);
+    color: #95a5a6;
+  }
+
+  .badge-finished {
+    @apply badge;
+    background: rgba(255, 213, 79, 0.15);
+    color: #FFD54F;
+  }
+
+  /* Flame glow effect */
+  .flame-glow {
+    text-shadow: 0 0 20px rgba(255, 107, 53, 0.3);
+  }
+
+  /* Table styles */
+  .data-table {
+    @apply w-full border-collapse;
+  }
+
+  .data-table th {
+    @apply px-3 py-2 text-left text-[10px] font-bold tracking-wider uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .data-table td {
+    @apply px-3 py-2 text-sm;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  }
+
+  .data-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+  }
+}
+
+/* Survivor avatar pulse animation */
+@keyframes pulse-tribe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 53, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 107, 53, 0); }
+}
+
+.avatar-pulse {
+  animation: pulse-tribe 2s infinite;
+}
+
+/* Torch flicker animation */
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+.torch-flicker {
+  animation: flicker 1.5s ease-in-out infinite;
+}
