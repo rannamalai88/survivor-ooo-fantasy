@@ -142,7 +142,7 @@ export default function MyTeamPage() {
   }, [selectedManager]);
 
   const episodes = useMemo(() => {
-    const eps = [...new Set(survivorScores.map(s => s.episode))].sort((a, b) => a - b);
+    const eps = Array.from(new Set(survivorScores.map(s => s.episode))).sort((a, b) => a - b);
     return eps;
   }, [survivorScores]);
 

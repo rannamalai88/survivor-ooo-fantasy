@@ -85,7 +85,7 @@ export default function DynastyPage() {
 
   // ---- Computed ----
   const seasons = useMemo(() => {
-    const s = [...new Set(dynastyData.map(d => d.season_label))].sort();
+    const s = Array.from(new Set(dynastyData.map(d => d.season_label))).sort();
     return s;
   }, [dynastyData]);
 

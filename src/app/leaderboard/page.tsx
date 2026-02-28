@@ -187,7 +187,7 @@ export default function LeaderboardPage() {
 
   // ---- Episode numbers ----
   const episodes = useMemo(() => {
-    const eps = [...new Set(epScores.map((s) => s.episode))].sort((a, b) => a - b);
+    const eps = Array.from(new Set(epScores.map((s) => s.episode))).sort((a, b) => a - b);
     return eps;
   }, [epScores]);
 
