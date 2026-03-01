@@ -52,9 +52,9 @@ function buildDraftOrder(): DraftSlot[] {
 
   for (let round = 1; round <= 5; round++) {
     if (round === 5) {
-      // Partner pick: snake continues from R4 (which was 1→12), so R5 is 12→1
+      // Partner pick: order 1→12 (Samin picks for Alli first, etc.)
       const indices = Array.from({ length: 12 }, (_, i) => i);
-      indices.reverse(); // 11→0
+      // No reverse — straight 0→11
       for (const i of indices) {
         slots.push({
           round: 5,
@@ -243,6 +243,7 @@ export function useDraft(seasonId: string) {
       // R5: Partner Pick — Anti-Collusion Rule
       // Eligible pool: survivors picked in R4 OR not yet retired (< 2 picks in R2-4)
       // Cannot pick someone already on the receiving manager's team
+      // No survivor can be picked more than twice in Round 5
       if (currentSlot.round === 5) {
         const receivingManager = managerByIndex(currentSlot.manager_index);
         if (!receivingManager) return false;
@@ -250,6 +251,10 @@ export function useDraft(seasonId: string) {
         // Can't pick someone already on the receiving manager's team (R1-R4)
         const managersPicks = picks.filter((p) => p.manager_id === receivingManager.id);
         if (managersPicks.some((p) => p.survivor_id === survivorId)) return false;
+
+        // No survivor can be picked more than twice in Round 5
+        const r5PickCount = picks.filter((p) => p.round === 5 && p.survivor_id === survivorId).length;
+        if (r5PickCount >= 2) return false;
 
         // Must be in eligible pool: picked in R4 OR not retired
         const wasPickedInR4 = round4Picks.has(survivorId);
