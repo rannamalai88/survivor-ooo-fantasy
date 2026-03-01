@@ -212,6 +212,17 @@ export function useDraft(seasonId: string) {
     return counts;
   }, [picks]);
 
+  // Set of survivor IDs picked in Round 4 (used for R5 eligibility)
+  const round4Picks = useMemo(() => {
+    const r4set = new Set<string>();
+    picks.forEach((pick) => {
+      if (pick.round === 4) {
+        r4set.add(pick.survivor_id);
+      }
+    });
+    return r4set;
+  }, [picks]);
+
   // Check if a survivor is available for the current pick
   const isSurvivorAvailable = useCallback(
     (survivorId: string): boolean => {
@@ -229,17 +240,40 @@ export function useDraft(seasonId: string) {
         return (retirementCount[survivorId] || 0) < 2;
       }
 
-      // R5: partner pick — can only pick survivors the RECEIVING manager doesn't already have
+      // R5: Partner Pick — Anti-Collusion Rule
+      // Eligible pool: survivors picked in R4 OR not yet retired (< 2 picks in R2-4)
+      // Cannot pick someone already on the receiving manager's team
       if (currentSlot.round === 5) {
         const receivingManager = managerByIndex(currentSlot.manager_index);
         if (!receivingManager) return false;
+
+        // Can't pick someone already on the receiving manager's team (R1-R4)
         const managersPicks = picks.filter((p) => p.manager_id === receivingManager.id);
-        return !managersPicks.some((p) => p.survivor_id === survivorId);
+        if (managersPicks.some((p) => p.survivor_id === survivorId)) return false;
+
+        // Must be in eligible pool: picked in R4 OR not retired
+        const wasPickedInR4 = round4Picks.has(survivorId);
+        const notRetired = (retirementCount[survivorId] || 0) < 2;
+        return wasPickedInR4 || notRetired;
       }
 
       return true;
     },
-    [currentSlot, isDraftComplete, retirementCount, survivors, picks, managerByIndex]
+    [currentSlot, isDraftComplete, retirementCount, round4Picks, survivors, picks, managerByIndex]
+  );
+
+  // Helper: get R5 eligibility reason for UI display
+  const getR5EligibilityTag = useCallback(
+    (survivorId: string): string | null => {
+      if (!currentSlot || currentSlot.round !== 5) return null;
+      const wasPickedInR4 = round4Picks.has(survivorId);
+      const pickCount = retirementCount[survivorId] || 0;
+      if (wasPickedInR4 && pickCount >= 2) return 'R4 pick';
+      if (wasPickedInR4) return 'R4 pick';
+      if (pickCount < 2) return 'Available';
+      return null; // Not eligible
+    },
+    [currentSlot, round4Picks, retirementCount]
   );
 
   // Get picks for a specific manager
@@ -368,6 +402,7 @@ export function useDraft(seasonId: string) {
     // Helpers
     managerByIndex,
     isSurvivorAvailable,
+    getR5EligibilityTag,
     picksForManager,
     survivorById,
 

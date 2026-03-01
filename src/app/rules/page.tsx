@@ -152,7 +152,7 @@ export default function RulesPage() {
           {[
             { r: 'Round 1 — Free Pick', o: 'Order: 1 → 12', d: 'No restrictions. Duplicates allowed. Does NOT count toward retirement.' },
             { r: 'Rounds 2–4 — Snake', o: 'R2: 1→12 · R3: 12→1 · R4: 1→12', d: 'Once a survivor is drafted twice across R2–4, they\'re retired from the board. R1 picks don\'t count toward this limit.' },
-            { r: 'Round 5 — Partner Pick (Snake)', o: 'R5: 12→1 (continues snake from R4)', d: 'Your partner picks a survivor FOR you. Can\'t pick a survivor the receiving manager already has. Retirement counter resets.' },
+            { r: 'Round 5 — Partner Pick (Snake)', o: 'R5: 12→1 (continues snake from R4)', d: 'Your partner picks a survivor FOR you. Eligible pool: survivors picked in Round 4 OR not yet retired (<2 picks in R2–4). Can\'t pick someone already on the receiving partner\'s team. Retirement cap does not apply — a survivor at 2 picks can still be chosen.' },
           ].map((r) => (
             <div key={r.r} style={{ padding: '10px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)', marginBottom: '6px' }}>
               <div style={{ fontSize: '13px', fontWeight: 700, color: '#1ABC9C' }}>{r.r}</div>
