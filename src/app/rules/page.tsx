@@ -167,7 +167,7 @@ export default function RulesPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
               {[
                 ['Alli ↔ Samin'], ['Alan ↔ Gisele'], ['Hari ↔ Michael'],
-                ['Stephanie ↔ Amy'], ['Alec ↔ Cassie'], ['Veena ↔ Ramu'],
+                ['Stephanie ↔ Amy'], ['Alec ↔ Ramu'], ['Veena ↔ Cassie'],
               ].map(([pair]) => (
                 <div key={pair} style={{ padding: '4px 8px', background: 'rgba(155,89,182,0.08)', borderRadius: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
                   {pair}

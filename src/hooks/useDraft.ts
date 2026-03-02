@@ -40,10 +40,12 @@ export interface DraftSlot {
 }
 
 // ─── Build draft order ─────────────────────────────────────
-// R5 partner map: draft position pairing 1↔12, 2↔11, 3↔10, 4↔9, 5↔8, 6↔7
+// R5 partner map: draft position pairing
+// 1↔12 (Alli↔Samin), 2↔11 (Alan↔Gisele), 3↔10 (Hari↔Michael),
+// 4↔9 (Stephanie↔Amy), 5↔7 (Alec↔Ramu), 6↔8 (Veena↔Cassie)
 const R5_PARTNER_MAP: Record<number, number> = {
-  0: 11, 1: 10, 2: 9, 3: 8, 4: 7, 5: 6,
-  6: 5, 7: 4, 8: 3, 9: 2, 10: 1, 11: 0,
+  0: 11, 1: 10, 2: 9, 3: 8, 4: 6, 5: 7,
+  6: 4, 7: 5, 8: 3, 9: 2, 10: 1, 11: 0,
 };
 
 function buildDraftOrder(): DraftSlot[] {
