@@ -1,863 +1,292 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import AuthGuard from '@/components/auth/AuthGuard';
 import { supabase } from '@/lib/supabase/client';
-import { SEASON_ID, TRIBE_COLORS, CHIPS } from '@/lib/constants';
+import { TRIBE_COLORS, CHIPS } from '@/lib/constants';
 
-// ============================================================
-// Types
-// ============================================================
-interface Survivor {
-  id: string;
-  name: string;
-  full_name: string;
-  tribe: string;
-  is_active: boolean;
-  photo_url: string;
-}
+interface Survivor { id: string; name: string; tribe: string; is_active: boolean; photo_url: string | null; cast_id: number; }
+interface TeamMember extends Survivor { is_team_active: boolean; }
+interface ExistingPick { id: string; captain_id: string | null; pool_pick_id: string | null; pool_backdoor_id: string | null; net_pick_id: string | null; chip_played: number | null; chip_target: string | null; submitted_at: string | null; is_locked: boolean; }
 
-interface Manager {
-  id: string;
-  name: string;
-  is_commissioner: boolean;
-}
+const TC: Record<string, string> = TRIBE_COLORS;
 
-interface TeamMember {
-  survivor_id: string;
-  survivors: Survivor;
-}
-
-interface PoolStatus {
-  status: string;
-  has_immunity_idol: boolean;
-  idol_used: boolean;
-}
-
-interface WeeklyPick {
-  id: string;
-  captain_id: string | null;
-  pool_pick_id: string | null;
-  pool_backdoor_id: string | null;
-  net_pick_id: string | null;
-  chip_played: number | null;
-  chip_target: string | null;
-  is_locked: boolean;
-}
-
-// ============================================================
-// Helper Components
-// ============================================================
-function Avatar({ name, tribe, size = 32 }: { name: string; tribe: string; size?: number }) {
-  const initial = name.startsWith('"') ? 'Q' : name[0];
-  const color = TRIBE_COLORS[tribe] || '#666';
+const Av = ({ name, tribe, photoUrl, sz = 28 }: { name: string; tribe: string; photoUrl?: string | null; sz?: number }) => {
+  const ini = name[0] === '"' ? 'Q' : name[0];
+  const color = TC[tribe] || '#888';
   return (
-    <div
-      className="rounded-full flex items-center justify-center flex-shrink-0"
-      style={{
-        width: size,
-        height: size,
-        background: `linear-gradient(135deg, ${color}44, ${color}77)`,
-        border: `1.5px solid ${color}`,
-      }}
-    >
-      <span className="font-extrabold text-white" style={{ fontSize: size * 0.42 }}>
-        {initial}
-      </span>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  icon,
-  badge,
-  badgeColor,
-  children,
-}: {
-  title: string;
-  icon: string;
-  badge?: string;
-  badgeColor?: string;
-  children: React.ReactNode;
-}) {
-  const color = badgeColor || '#FF6B35';
-  return (
-    <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5 mb-3.5">
-      <div className="flex items-center justify-between mb-3.5">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
-          <h3 className="m-0 text-sm font-bold tracking-wider text-white/50 uppercase">{title}</h3>
-        </div>
-        {badge && (
-          <span
-            className="text-[10px] font-bold px-2.5 py-0.5 rounded-full tracking-wider"
-            style={{
-              background: `${color}15`,
-              color: color,
-              border: `1px solid ${color}30`,
-            }}
-          >
-            {badge}
-          </span>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function SurvivorOption({
-  survivor,
-  selected,
-  onClick,
-  disabled,
-}: {
-  survivor: Survivor;
-  selected: boolean;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  const color = TRIBE_COLORS[survivor.tribe] || '#666';
-  return (
-    <div
-      onClick={disabled ? undefined : onClick}
-      className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all cursor-pointer"
-      style={{
-        background: selected ? `${color}12` : 'rgba(255,255,255,0.02)',
-        border: selected ? `1px solid ${color}50` : '1px solid rgba(255,255,255,0.04)',
-        opacity: disabled && !selected ? 0.3 : 1,
-        cursor: disabled ? 'default' : 'pointer',
-      }}
-    >
-      <Avatar name={survivor.name} tribe={survivor.tribe} size={28} />
-      <div className="flex-1">
-        <div className={`text-[13px] font-semibold ${selected ? 'text-white' : 'text-white/70'}`}>
-          {survivor.name}
-        </div>
-        <div className="text-[10px] font-bold tracking-wider" style={{ color }}>
-          {survivor.tribe.toUpperCase()}
-        </div>
-      </div>
-      {selected && (
-        <div
-          className="w-[18px] h-[18px] rounded-full flex items-center justify-center"
-          style={{ background: color }}
-        >
-          <span className="text-white text-[11px] font-extrabold">✓</span>
-        </div>
+    <div style={{ width: sz, height: sz, borderRadius: '50%', background: `linear-gradient(135deg,${color}44,${color}77)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: `1.5px solid ${color}`, overflow: 'hidden' }}>
+      {photoUrl ? (
+        <img src={photoUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+      ) : (
+        <span style={{ fontSize: sz * 0.42, fontWeight: 800, color: '#fff' }}>{ini}</span>
       )}
     </div>
   );
-}
+};
 
-function TribeFilter({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex gap-0.5 mb-2.5 bg-white/[0.03] rounded-md p-0.5 w-fit">
-      {['All', 'Vatu', 'Kalo', 'Cila'].map((t) => {
-        const active = value === t;
-        const color = t === 'All' ? '#fff' : TRIBE_COLORS[t];
-        return (
-          <button
-            key={t}
-            onClick={() => onChange(t)}
-            className="px-2.5 py-1 text-[10px] font-semibold border-none rounded cursor-pointer transition-all"
-            style={{
-              background: active ? (t === 'All' ? 'rgba(255,255,255,0.1)' : `${color}22`) : 'transparent',
-              color: active ? color : 'rgba(255,255,255,0.25)',
-            }}
-          >
-            {t}
-          </button>
-        );
-      })}
+const Flame = () => (
+  <svg width="14" height="18" viewBox="0 0 14 18" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+    <path d="M7 0C7 0 14 6 14 11C14 14.866 10.866 18 7 18C3.134 18 0 14.866 0 11C0 6 7 0 7 0Z" fill="url(#fg_pk)" />
+    <path d="M7 8C7 8 10.5 11 10.5 13.5C10.5 15.433 8.933 17 7 17C5.067 17 3.5 15.433 3.5 13.5C3.5 11 7 8 7 8Z" fill="url(#fi_pk)" />
+    <defs>
+      <linearGradient id="fg_pk" x1="7" y1="0" x2="7" y2="18"><stop stopColor="#FF6B35" /><stop offset="1" stopColor="#D32F2F" /></linearGradient>
+      <linearGradient id="fi_pk" x1="7" y1="8" x2="7" y2="17"><stop stopColor="#FFD54F" /><stop offset="1" stopColor="#FF8F00" /></linearGradient>
+    </defs>
+  </svg>
+);
+
+const Section = ({ title, icon, children, badge, badgeColor }: { title: string; icon: string; children: React.ReactNode; badge?: string; badgeColor?: string; }) => (
+  <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '20px', marginBottom: '14px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '18px' }}>{icon}</span>
+        <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase' as const }}>{title}</h3>
+      </div>
+      {badge && <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: `${badgeColor || '#FF6B35'}15`, color: badgeColor || '#FF6B35', border: `1px solid ${badgeColor || '#FF6B35'}30`, letterSpacing: '1px' }}>{badge}</span>}
     </div>
-  );
-}
+    {children}
+  </div>
+);
 
-// ============================================================
-// Main Component
-// ============================================================
-export default function WeeklyPicksPage() {
-  // ---- State ----
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+const SurvivorOption = ({ s, selected, onClick, disabled }: { s: Survivor; selected: boolean; onClick: () => void; disabled: boolean; }) => (
+  <div onClick={disabled ? undefined : onClick} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: selected ? `${TC[s.tribe]}12` : 'rgba(255,255,255,0.02)', border: selected ? `1px solid ${TC[s.tribe]}50` : '1px solid rgba(255,255,255,0.04)', borderRadius: '10px', cursor: disabled ? 'default' : 'pointer', opacity: disabled && !selected ? 0.3 : 1, transition: 'all 0.2s' }}>
+    <Av name={s.name} tribe={s.tribe} photoUrl={s.photo_url} sz={28} />
+    <div style={{ flex: 1 }}>
+      <div style={{ fontSize: '13px', fontWeight: 600, color: selected ? '#fff' : 'rgba(255,255,255,0.7)' }}>{s.name}</div>
+      <div style={{ fontSize: '10px', fontWeight: 700, color: TC[s.tribe], letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>
+    </div>
+    {selected && <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: TC[s.tribe], display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#fff', fontSize: '11px', fontWeight: 800 }}>&#x2713;</span></div>}
+  </div>
+);
 
-  // Data from Supabase
-  const [currentEpisode, setCurrentEpisode] = useState(2);
-  const [myManager, setMyManager] = useState<Manager | null>(null);
-  const [allManagers, setAllManagers] = useState<Manager[]>([]);
-  const [myTeam, setMyTeam] = useState<Survivor[]>([]);
+const TribeFilter = ({ value, onChange, tribes }: { value: string; onChange: (v: string) => void; tribes: string[] }) => (
+  <div style={{ display: 'flex', gap: '4px', marginBottom: '10px' }}>
+    {['All', ...tribes].map(t => (
+      <button key={t} onClick={() => onChange(t)} style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' as const, border: 'none', cursor: 'pointer', background: value === t ? (t === 'All' ? 'rgba(255,107,53,0.15)' : `${TC[t]}20`) : 'rgba(255,255,255,0.03)', color: value === t ? (t === 'All' ? '#FF6B35' : TC[t]) : 'rgba(255,255,255,0.2)', transition: 'all 0.2s' }}>{t}</button>
+    ))}
+  </div>
+);
+
+function PicksContent() {
+  const { manager, managers } = useAuth();
+
+  const [season, setSeason] = useState<any>(null);
+  const [myTeam, setMyTeam] = useState<TeamMember[]>([]);
   const [allSurvivors, setAllSurvivors] = useState<Survivor[]>([]);
-  const [poolStatus, setPoolStatus] = useState<PoolStatus | null>(null);
+  const [existingPick, setExistingPick] = useState<ExistingPick | null>(null);
+  const [poolStatus, setPoolStatus] = useState<string>('active');
   const [usedPoolPicks, setUsedPoolPicks] = useState<string[]>([]);
   const [usedChips, setUsedChips] = useState<number[]>([]);
-  const [existingPick, setExistingPick] = useState<WeeklyPick | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
-  // Pick selections
   const [captain, setCaptain] = useState<string | null>(null);
   const [poolPick, setPoolPick] = useState<string | null>(null);
   const [backdoorPick, setBackdoorPick] = useState<string | null>(null);
   const [netPick, setNetPick] = useState<string | null>(null);
   const [chipPlay, setChipPlay] = useState<number | null>(null);
   const [chipTarget, setChipTarget] = useState<string | null>(null);
-
-  // Filters
   const [poolFilter, setPoolFilter] = useState('All');
   const [netFilter, setNetFilter] = useState('All');
+  const [timeLeft, setTimeLeft] = useState('');
+  const [isPastDeadline, setIsPastDeadline] = useState(false);
 
-  // Commissioner mode: pick on behalf of managers
-  const [selectedManager, setSelectedManager] = useState<string | null>(null);
-
-  // ---- Computed: which manager are we editing picks for ----
-  const activeManagerId = selectedManager || myManager?.id || null;
-
-  // ---- Load Data ----
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  // Reload picks when activeManagerId changes (commissioner switching managers)
-  useEffect(() => {
-    if (activeManagerId && currentEpisode) {
-      loadPicksForManager(activeManagerId, currentEpisode);
-    }
-  }, [activeManagerId, currentEpisode]);
+  useEffect(() => { if (manager) loadData(); }, [manager]);
 
   async function loadData() {
+    if (!manager) return;
+    setLoading(true);
     try {
-      setLoading(true);
+      const { data: seasonData } = await supabase.from('seasons').select('*').in('status', ['active', 'drafting']).order('number', { ascending: false }).limit(1).single();
+      if (!seasonData) { setLoading(false); return; }
+      setSeason(seasonData);
+      const sid = seasonData.id;
+      const ep = seasonData.current_episode || 1;
 
-      // Fetch season info
-      const { data: season } = await supabase
-        .from('seasons')
-        .select('current_episode')
-        .eq('id', SEASON_ID)
-        .single();
-      
-      const episode = season?.current_episode || 2;
-      setCurrentEpisode(episode);
-
-      // Fetch all survivors
-      const { data: survivors } = await supabase
-        .from('survivors')
-        .select('*')
-        .eq('season_id', SEASON_ID)
-        .order('name');
-      
+      const { data: survivors } = await supabase.from('survivors').select('*').eq('season_id', sid).order('cast_id');
       setAllSurvivors(survivors || []);
 
-      // Fetch all managers
-      const { data: managers } = await supabase
-        .from('managers')
-        .select('id, name, is_commissioner')
-        .eq('season_id', SEASON_ID)
-        .order('draft_position');
-      
-      setAllManagers(managers || []);
+      const { data: teamData } = await supabase.from('teams').select('*, survivors(*)').eq('season_id', sid).eq('manager_id', manager.id).eq('is_active', true);
+      if (teamData) setMyTeam(teamData.map((t: any) => ({ ...t.survivors, is_team_active: t.is_active })));
 
-      // For now, default to Ramu (commissioner) — will use auth later
-      const me = managers?.find((m) => m.is_commissioner) || managers?.[0];
-      setMyManager(me || null);
+      const { data: pickData } = await supabase.from('weekly_picks').select('*').eq('season_id', sid).eq('manager_id', manager.id).eq('episode', ep).maybeSingle();
+      if (pickData) { setExistingPick(pickData); setCaptain(pickData.captain_id); setPoolPick(pickData.pool_pick_id); setBackdoorPick(pickData.pool_backdoor_id); setNetPick(pickData.net_pick_id); setChipPlay(pickData.chip_played); setChipTarget(pickData.chip_target); }
 
-      if (me) {
-        // Fetch my team
-        const { data: team } = await supabase
-          .from('teams')
-          .select('survivor_id, survivors(*)')
-          .eq('season_id', SEASON_ID)
-          .eq('manager_id', me.id)
-          .eq('is_active', true);
-        
-        const teamSurvivors = (team || []).map((t: any) => t.survivors).filter(Boolean);
-        setMyTeam(teamSurvivors);
+      const { data: poolData } = await supabase.from('pool_status').select('*').eq('season_id', sid).eq('manager_id', manager.id).maybeSingle();
+      if (poolData) setPoolStatus(poolData.status || 'active');
 
-        await loadPicksForManager(me.id, episode);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load data');
-    } finally {
-      setLoading(false);
-    }
+      const { data: prevPicks } = await supabase.from('weekly_picks').select('pool_pick_id').eq('season_id', sid).eq('manager_id', manager.id).lt('episode', ep).not('pool_pick_id', 'is', null);
+      if (prevPicks) setUsedPoolPicks(prevPicks.map((p: any) => p.pool_pick_id).filter(Boolean));
+
+      const { data: chipsData } = await supabase.from('chips_used').select('chip_id').eq('season_id', sid).eq('manager_id', manager.id);
+      if (chipsData) setUsedChips(chipsData.map((c: any) => c.chip_id));
+    } catch (err) { console.error('Error loading picks:', err); }
+    setLoading(false);
   }
 
-  async function loadPicksForManager(managerId: string, episode: number) {
-    // Fetch pool status
-    const { data: ps } = await supabase
-      .from('pool_status')
-      .select('status, has_immunity_idol, idol_used')
-      .eq('season_id', SEASON_ID)
-      .eq('manager_id', managerId)
-      .single();
-    
-    setPoolStatus(ps || { status: 'active', has_immunity_idol: false, idol_used: false });
-
-    // Fetch previously used pool picks (from all prior episodes)
-    const { data: priorPicks } = await supabase
-      .from('weekly_picks')
-      .select('pool_pick_id')
-      .eq('season_id', SEASON_ID)
-      .eq('manager_id', managerId)
-      .lt('episode', episode)
-      .not('pool_pick_id', 'is', null);
-    
-    setUsedPoolPicks((priorPicks || []).map((p: any) => p.pool_pick_id));
-
-    // Fetch used chips
-    const { data: chips } = await supabase
-      .from('chips_used')
-      .select('chip_id')
-      .eq('season_id', SEASON_ID)
-      .eq('manager_id', managerId);
-    
-    setUsedChips((chips || []).map((c: any) => c.chip_id));
-
-    // Fetch existing picks for this episode
-    const { data: existing } = await supabase
-      .from('weekly_picks')
-      .select('*')
-      .eq('season_id', SEASON_ID)
-      .eq('manager_id', managerId)
-      .eq('episode', episode)
-      .single();
-    
-    if (existing) {
-      setExistingPick(existing);
-      setCaptain(existing.captain_id);
-      setPoolPick(existing.pool_pick_id);
-      setBackdoorPick(existing.pool_backdoor_id);
-      setNetPick(existing.net_pick_id);
-      setChipPlay(existing.chip_played);
-      setChipTarget(existing.chip_target);
-      if (existing.is_locked) {
-        setSubmitted(true);
-      }
-    } else {
-      // Reset picks
-      setExistingPick(null);
-      setCaptain(null);
-      setPoolPick(null);
-      setBackdoorPick(null);
-      setNetPick(null);
-      setChipPlay(null);
-      setChipTarget(null);
-      setSubmitted(false);
+  useEffect(() => {
+    if (!season) return;
+    function getDeadline() {
+      const now = new Date();
+      const day = now.getDay();
+      const daysUntil = (3 - day + 7) % 7 || (now.getUTCHours() >= 24 ? 7 : 0);
+      const wed = new Date(now); wed.setDate(now.getDate() + daysUntil);
+      wed.setUTCHours(24, 0, 0, 0); // 7pm CDT = midnight UTC Thu
+      return wed;
     }
-
-    // If commissioner switches manager, load that manager's team
-    if (managerId !== myManager?.id) {
-      const { data: team } = await supabase
-        .from('teams')
-        .select('survivor_id, survivors(*)')
-        .eq('season_id', SEASON_ID)
-        .eq('manager_id', managerId)
-        .eq('is_active', true);
-      
-      setMyTeam((team || []).map((t: any) => t.survivors).filter(Boolean));
+    const dl = getDeadline();
+    function tick() {
+      const diff = dl.getTime() - Date.now();
+      if (diff <= 0) { setTimeLeft('LOCKED'); setIsPastDeadline(true); return; }
+      const d = Math.floor(diff / 86400000), h = Math.floor((diff % 86400000) / 3600000), m = Math.floor((diff % 3600000) / 60000);
+      setTimeLeft(d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`);
     }
-  }
+    tick(); const iv = setInterval(tick, 60000); return () => clearInterval(iv);
+  }, [season]);
 
-  // ---- Computed values ----
-  const activeSurvivors = useMemo(
-    () => allSurvivors.filter((s) => s.is_active),
-    [allSurvivors]
-  );
+  const currentEp = season?.current_episode || 1;
+  const currentWeek = currentEp;
+  const tribes = useMemo(() => [...new Set(allSurvivors.map(s => s.tribe))].sort(), [allSurvivors]);
+  const activeSurvivors = allSurvivors.filter(s => s.is_active);
+  const activeTeam = myTeam.filter(s => s.is_active);
+  const poolSurvivors = activeSurvivors.filter(s => !usedPoolPicks.includes(s.id));
+  const filteredPool = poolFilter === 'All' ? poolSurvivors : poolSurvivors.filter(s => s.tribe === poolFilter);
+  const filteredNet = netFilter === 'All' ? activeSurvivors : activeSurvivors.filter(s => s.tribe === netFilter);
+  const availableChips = CHIPS.filter(c => { if (usedChips.includes(c.id)) return false; const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number); return currentWeek >= lo && currentWeek <= hi; });
+  const activeChipWindow = availableChips.length > 0;
+  const picksComplete = captain !== null && (poolStatus !== 'active' || poolPick !== null) && netPick !== null;
+  const isLocked = existingPick?.is_locked || isPastDeadline;
 
-  const poolSurvivors = useMemo(() => {
-    let available = activeSurvivors.filter((s) => !usedPoolPicks.includes(s.id));
-    if (poolFilter !== 'All') available = available.filter((s) => s.tribe === poolFilter);
-    return available;
-  }, [activeSurvivors, usedPoolPicks, poolFilter]);
-
-  const netSurvivors = useMemo(() => {
-    if (netFilter === 'All') return activeSurvivors;
-    return activeSurvivors.filter((s) => s.tribe === netFilter);
-  }, [activeSurvivors, netFilter]);
-
-  // Determine which chip window is active
-  const currentWeek = currentEpisode; // episode ~= week for chip purposes
-  const availableChips = CHIPS.filter((c) => {
-    if (usedChips.includes(c.id)) return false;
-    const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number);
-    return currentWeek >= lo && currentWeek <= hi;
-  });
-
-  const isPoolActive = poolStatus?.status === 'active';
-  const isDrowned = poolStatus?.status === 'drowned';
-  const isBurnt = poolStatus?.status === 'burnt';
-
-  // Required picks check
-  const picksComplete = captain !== null && ((!isPoolActive && !isDrowned) || isPoolActive ? poolPick !== null : isDrowned ? backdoorPick !== null : true);
-
-  // ---- Submit Picks ----
-  async function handleSubmit() {
-    if (!activeManagerId || saving) return;
-    
+  async function savePicks() {
+    if (!manager || !season || isLocked) return;
+    setSaving(true); setSaveMessage(null);
+    const row = { season_id: season.id, manager_id: manager.id, episode: currentEp, captain_id: captain, pool_pick_id: poolStatus === 'active' ? poolPick : null, pool_backdoor_id: poolStatus === 'drowned' ? backdoorPick : null, net_pick_id: netPick, chip_played: chipPlay, chip_target: chipTarget, submitted_at: new Date().toISOString(), is_locked: false };
     try {
-      setSaving(true);
-      setError(null);
-
-      const pickData = {
-        season_id: SEASON_ID,
-        manager_id: activeManagerId,
-        episode: currentEpisode,
-        captain_id: captain,
-        pool_pick_id: isPoolActive ? poolPick : null,
-        pool_backdoor_id: isDrowned ? backdoorPick : null,
-        net_pick_id: netPick,
-        chip_played: chipPlay,
-        chip_target: chipPlay === 1 ? chipTarget : null,
-        submitted_at: new Date().toISOString(),
-        is_locked: false,
-      };
-
-      let result;
-      if (existingPick) {
-        // Update existing
-        result = await supabase
-          .from('weekly_picks')
-          .update(pickData)
-          .eq('id', existingPick.id);
-      } else {
-        // Insert new
-        result = await supabase
-          .from('weekly_picks')
-          .insert(pickData);
-      }
-
-      if (result.error) throw result.error;
-
-      // If a chip was played, record it in chips_used (if not already there)
-      if (chipPlay && !usedChips.includes(chipPlay)) {
-        await supabase.from('chips_used').insert({
-          season_id: SEASON_ID,
-          manager_id: activeManagerId,
-          chip_id: chipPlay,
-          episode: currentEpisode,
-          target: chipTarget,
-        });
-      }
-
-      // Log activity
-      const managerName = allManagers.find((m) => m.id === activeManagerId)?.name || 'Unknown';
-      await supabase.from('activity_log').insert({
-        season_id: SEASON_ID,
-        type: 'chip',
-        message: `${managerName} submitted picks for Episode ${currentEpisode}`,
-        manager_id: activeManagerId,
-        metadata: { episode: currentEpisode },
-      });
-
-      setSubmitted(true);
-      setSuccessMsg('Picks submitted successfully!');
-      setTimeout(() => setSuccessMsg(null), 3000);
-    } catch (err: any) {
-      setError(err.message || 'Failed to submit picks');
-    } finally {
-      setSaving(false);
-    }
+      if (existingPick) { const { error } = await supabase.from('weekly_picks').update(row).eq('id', existingPick.id); if (error) throw error; }
+      else { const { error } = await supabase.from('weekly_picks').insert(row); if (error) throw error; }
+      if (chipPlay && !usedChips.includes(chipPlay)) { await supabase.from('chips_used').insert({ season_id: season.id, manager_id: manager.id, chip_id: chipPlay, episode: currentEp, target: chipTarget }); }
+      setSaveMessage('Picks submitted! You can update them until the deadline.');
+      await loadData();
+    } catch (err: any) { setSaveMessage(`Error: ${err.message || 'Could not save'}`); }
+    setSaving(false);
   }
 
-  // ---- Edit mode (after submission) ----
-  function handleEdit() {
-    setSubmitted(false);
-  }
+  const deadlineStr = useMemo(() => {
+    const now = new Date(); const d = (3 - now.getDay() + 7) % 7; const w = new Date(now); w.setDate(now.getDate() + (d === 0 ? 0 : d));
+    return `${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][w.getDay()]}, ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][w.getMonth()]} ${w.getDate()} \u00B7 7:00 PM CT`;
+  }, []);
 
-  // ---- Deadline display ----
-  const deadlineStr = `Wed · 7:00 PM CT`;
-
-  // ---- Render ----
-  if (loading) {
-    return (
-      <div className="max-w-2xl mx-auto px-4 py-12 text-center">
-        <div className="text-4xl mb-4 animate-pulse">🔥</div>
-        <p className="text-white/30 text-sm">Loading picks...</p>
-      </div>
-    );
-  }
-
-  // Submitted confirmation view
-  if (submitted) {
-    const captainSurvivor = myTeam.find((s) => s.id === captain);
-    const poolSurvivor = allSurvivors.find((s) => s.id === poolPick);
-    const backdoorSurvivor = allSurvivors.find((s) => s.id === backdoorPick);
-    const netSurvivor = allSurvivors.find((s) => s.id === netPick);
-    const chipInfo = chipPlay ? CHIPS.find((c) => c.id === chipPlay) : null;
-
-    return (
-      <div className="max-w-lg mx-auto px-4 py-12">
-        <div className="text-center mb-8">
-          <div className="text-5xl mb-4">🔥</div>
-          <h1 className="text-2xl font-extrabold text-white tracking-wider mb-2">Picks Submitted!</h1>
-          <p className="text-white/40 text-sm">
-            Episode {currentEpisode} picks are in. You can edit them until the deadline.
-          </p>
-        </div>
-
-        <div className="bg-white/[0.03] rounded-xl p-4 border border-white/[0.06] mb-6">
-          {/* Captain */}
-          <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
-            <span className="text-xs text-white/35">👑 Captain</span>
-            <span className="text-xs font-bold" style={{ color: TRIBE_COLORS[captainSurvivor?.tribe || ''] }}>
-              {captainSurvivor?.name || '—'}
-            </span>
-          </div>
-          {/* Pool */}
-          {isPoolActive && (
-            <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
-              <span className="text-xs text-white/35">🌊 Pool Pick</span>
-              <span className="text-xs font-bold" style={{ color: TRIBE_COLORS[poolSurvivor?.tribe || ''] }}>
-                {poolSurvivor?.name || '—'}
-              </span>
-            </div>
-          )}
-          {isDrowned && (
-            <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
-              <span className="text-xs text-white/35">🚪 Backdoor Guess</span>
-              <span className="text-xs font-bold text-red-400">
-                {backdoorSurvivor?.name || '—'}
-              </span>
-            </div>
-          )}
-          {/* NET */}
-          <div className="flex justify-between py-1.5 border-b border-white/[0.04]">
-            <span className="text-xs text-white/35">💬 NET Guess</span>
-            <span className="text-xs font-bold" style={{ color: TRIBE_COLORS[netSurvivor?.tribe || ''] }}>
-              {netSurvivor?.name || '—'}
-            </span>
-          </div>
-          {/* Chip */}
-          <div className="flex justify-between py-1.5">
-            <span className="text-xs text-white/35">🎰 Chip</span>
-            <span className={`text-xs font-bold ${chipInfo ? 'text-yellow-300' : 'text-white/20'}`}>
-              {chipInfo ? `${chipInfo.icon} ${chipInfo.name}${chipTarget ? ` → ${allManagers.find(m => m.id === chipTarget)?.name || chipTarget}` : ''}` : 'None'}
-            </span>
-          </div>
-        </div>
-
-        <button
-          onClick={handleEdit}
-          className="w-full py-3 rounded-lg border border-white/10 bg-white/[0.03] text-white/60 font-bold text-sm tracking-wider hover:bg-white/[0.06] transition-all cursor-pointer"
-        >
-          ✏️ Edit Picks
-        </button>
-      </div>
-    );
-  }
+  if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-white/30 text-sm tracking-wider uppercase">Loading picks...</div></div>;
+  if (!season) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-center"><div className="text-3xl mb-3">&#x1F3DD;</div><div className="text-white/40 text-sm">No active season found</div></div></div>;
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="text-center mb-6">
-        <h1 className="text-xl font-extrabold text-white tracking-wider mb-1">
-          Episode {currentEpisode} Picks
-        </h1>
-        <p className="text-white/25 text-xs">
-          Due {deadlineStr} · {myManager?.is_commissioner ? 'Commissioner Mode' : (allManagers.find(m => m.id === activeManagerId)?.name || '')}
-        </p>
-      </div>
-
-      {/* Commissioner: manager selector */}
-      {myManager?.is_commissioner && (
-        <div className="bg-orange-500/[0.06] border border-orange-500/20 rounded-xl p-4 mb-4">
-          <div className="text-[10px] font-bold tracking-widest text-orange-400/60 uppercase mb-2">
-            Commissioner — Submit picks for:
+    <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8e8', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
+      <div style={{ maxWidth: '540px', margin: '0 auto', padding: '20px 16px 100px' }}>
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+            <Flame />
+            <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: '#fff' }}>Weekly Picks</h1>
+            <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: 'rgba(255,107,53,0.1)', color: '#FF6B35', border: '1px solid rgba(255,107,53,0.2)' }}>EP. {currentEp}</span>
           </div>
-          <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
-            {allManagers.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => {
-                  setSelectedManager(m.id === myManager?.id ? null : m.id);
-                  setSubmitted(false);
-                }}
-                className="px-2 py-1.5 rounded-md text-xs font-semibold border transition-all cursor-pointer"
-                style={{
-                  background: (activeManagerId === m.id) ? 'rgba(255,107,53,0.15)' : 'rgba(255,255,255,0.02)',
-                  borderColor: (activeManagerId === m.id) ? 'rgba(255,107,53,0.4)' : 'rgba(255,255,255,0.06)',
-                  color: (activeManagerId === m.id) ? '#FF6B35' : 'rgba(255,255,255,0.4)',
-                }}
-              >
-                {m.name}
-              </button>
-            ))}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
+            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>Due: {deadlineStr}</span>
+            <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: isPastDeadline ? 'rgba(255,80,80,0.1)' : 'rgba(255,215,0,0.08)', color: isPastDeadline ? '#FF5050' : '#FFD54F' }}>
+              {isPastDeadline ? '&#x1F512; LOCKED' : `&#x23F1; ${timeLeft}`}
+            </span>
           </div>
         </div>
-      )}
 
-      {/* Error / Success messages */}
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-red-400 text-xs">
-          {error}
-        </div>
-      )}
-      {successMsg && (
-        <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mb-4 text-green-400 text-xs">
-          {successMsg}
-        </div>
-      )}
+        {saveMessage && <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '14px', fontSize: '13px', background: saveMessage.startsWith('Error') ? 'rgba(255,80,80,0.08)' : 'rgba(26,188,156,0.08)', border: saveMessage.startsWith('Error') ? '1px solid rgba(255,80,80,0.2)' : '1px solid rgba(26,188,156,0.2)', color: saveMessage.startsWith('Error') ? '#FF5050' : '#1ABC9C' }}>{saveMessage}</div>}
+        {existingPick && !saveMessage && <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '12px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', color: 'rgba(26,188,156,0.7)' }}>&#x2705; Picks submitted &#x2014; you can update until the deadline</div>}
 
-      {/* Captain */}
-      <Section
-        title="Captain Designation"
-        icon="👑"
-        badge={captain ? 'SELECTED' : 'REQUIRED'}
-        badgeColor={captain ? '#FFD54F' : '#FF6B35'}
-      >
-        <p className="text-xs text-white/30 mb-3 leading-relaxed">
-          Select one survivor from your team to earn <strong className="text-yellow-300">2× points</strong> this episode.
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-          {myTeam
-            .filter((s) => s.is_active)
-            .map((s) => (
-              <SurvivorOption
-                key={s.id}
-                survivor={s}
-                selected={captain === s.id}
-                onClick={() => setCaptain(captain === s.id ? null : s.id)}
-              />
-            ))}
-        </div>
-        {myTeam.filter((s) => s.is_active).length === 0 && (
-          <p className="text-xs text-white/20 italic">No active survivors on your team.</p>
-        )}
-      </Section>
+        <Section title="Captain Designation" icon="&#x1F451;" badge="REQUIRED" badgeColor="#FFD54F">
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {activeTeam.length === 0 ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center' }}>No active survivors on your team</div> :
+            activeTeam.map(s => <SurvivorOption key={s.id} s={s} selected={captain === s.id} onClick={() => !isLocked && setCaptain(s.id)} disabled={isLocked} />)}
+          </div>
+        </Section>
 
-      {/* Pool */}
-      <Section
-        title="Survivor Pool"
-        icon="🌊"
-        badge={
-          isBurnt ? 'BURNT' :
-          isDrowned ? 'BACKDOOR MODE' :
-          poolPick ? 'SELECTED' : 'REQUIRED'
-        }
-        badgeColor={
-          isBurnt ? '#95a5a6' :
-          isDrowned ? '#E74C3C' :
-          poolPick ? '#1ABC9C' : '#FF6B35'
-        }
-      >
-        {isPoolActive ? (
-          <>
-            <p className="text-xs text-white/30 mb-3 leading-relaxed">
-              Pick one survivor who you think will <strong className="text-emerald-400">NOT be eliminated</strong>.
-              Previously used picks are excluded.
-              {poolStatus?.has_immunity_idol && !poolStatus?.idol_used && (
-                <span className="text-yellow-300"> 🛡️ Immunity Idol active.</span>
-              )}
-            </p>
-            <TribeFilter value={poolFilter} onChange={setPoolFilter} />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-72 overflow-y-auto pr-1">
-              {poolSurvivors.map((s) => (
-                <SurvivorOption
-                  key={s.id}
-                  survivor={s}
-                  selected={poolPick === s.id}
-                  onClick={() => setPoolPick(poolPick === s.id ? null : s.id)}
-                />
-              ))}
+        <Section title="Survivor Pool" icon="&#x1F30A;" badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : 'BURNT'} badgeColor={poolStatus === 'active' ? '#1ABC9C' : poolStatus === 'drowned' ? '#FF6B35' : '#FF5050'}>
+          {poolStatus === 'active' ? (<>
+            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Pick one survivor you think <b style={{ color: 'rgba(255,255,255,0.5)' }}>will NOT be eliminated</b>. No reusing previous picks.</p>
+            <TribeFilter value={poolFilter} onChange={setPoolFilter} tribes={tribes} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
+              {filteredPool.map(s => <SurvivorOption key={s.id} s={s} selected={poolPick === s.id} onClick={() => !isLocked && setPoolPick(s.id)} disabled={isLocked} />)}
             </div>
-            {poolSurvivors.length === 0 && (
-              <p className="text-xs text-white/20 italic">
-                No available survivors for this filter.
-              </p>
-            )}
-          </>
-        ) : isDrowned ? (
-          <>
-            <p className="text-xs text-white/30 mb-3 leading-relaxed">
-              You&apos;ve been <strong className="text-red-400">Drowned</strong>. Guess who{' '}
-              <strong className="text-red-400">WILL be eliminated</strong> to get back in.
-            </p>
-            <TribeFilter value={poolFilter} onChange={setPoolFilter} />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-72 overflow-y-auto pr-1">
-              {(poolFilter === 'All' ? activeSurvivors : activeSurvivors.filter(s => s.tribe === poolFilter)).map((s) => (
-                <SurvivorOption
-                  key={s.id}
-                  survivor={s}
-                  selected={backdoorPick === s.id}
-                  onClick={() => setBackdoorPick(backdoorPick === s.id ? null : s.id)}
-                />
-              ))}
+          </>) : poolStatus === 'drowned' ? (<>
+            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>You have been <b style={{ color: '#FF6B35' }}>Drowned</b>! Pick who <b style={{ color: '#FF6B35' }}>WILL be eliminated</b> for a Backdoor attempt.</p>
+            <TribeFilter value={poolFilter} onChange={setPoolFilter} tribes={tribes} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
+              {(poolFilter === 'All' ? activeSurvivors : activeSurvivors.filter(s => s.tribe === poolFilter)).map(s => <SurvivorOption key={s.id} s={s} selected={backdoorPick === s.id} onClick={() => !isLocked && setBackdoorPick(s.id)} disabled={isLocked} />)}
             </div>
-          </>
-        ) : (
-          <p className="text-xs text-white/25 italic">
-            You have no valid picks remaining this season.
-          </p>
-        )}
-      </Section>
+          </>) : <p style={{ fontSize: '12px', color: 'rgba(255,80,80,0.5)', margin: 0 }}>You have been <b>Burnt</b> &#x2014; no more pool picks this season.</p>}
+        </Section>
 
-      {/* NET */}
-      <Section
-        title="Next Episode Title (NET)"
-        icon="💬"
-        badge={netPick ? 'SELECTED' : 'OPTIONAL'}
-        badgeColor={netPick ? '#1ABC9C' : 'rgba(255,255,255,0.2)'}
-      >
-        <p className="text-xs text-white/30 mb-3 leading-relaxed">
-          Guess which survivor says the quote that becomes the episode title.{' '}
-          <strong className="text-yellow-300">3 points</strong> if correct.
-        </p>
-        <TribeFilter value={netFilter} onChange={setNetFilter} />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-72 overflow-y-auto pr-1">
-          {netSurvivors.map((s) => (
-            <SurvivorOption
-              key={s.id}
-              survivor={s}
-              selected={netPick === s.id}
-              onClick={() => setNetPick(netPick === s.id ? null : s.id)}
-            />
-          ))}
-        </div>
-      </Section>
+        <Section title="Name Episode Title (NET)" icon="&#x1F4AC;" badge="REQUIRED" badgeColor="#1ABC9C">
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Which survivor says the <b style={{ color: 'rgba(255,255,255,0.5)' }}>episode title quote</b>? Worth <b style={{ color: '#1ABC9C' }}>3 points</b>.</p>
+          <TribeFilter value={netFilter} onChange={setNetFilter} tribes={tribes} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
+            {filteredNet.map(s => <SurvivorOption key={s.id} s={s} selected={netPick === s.id} onClick={() => !isLocked && setNetPick(s.id)} disabled={isLocked} />)}
+          </div>
+        </Section>
 
-      {/* Chips */}
-      <Section
-        title="Game Chip"
-        icon="🎰"
-        badge={
-          chipPlay
-            ? CHIPS.find((c) => c.id === chipPlay)?.name
-            : availableChips.length > 0
-            ? `${availableChips.length} available`
-            : 'No chip this week'
-        }
-        badgeColor={chipPlay ? '#FFD54F' : availableChips.length > 0 ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.15)'}
-      >
-        {availableChips.length > 0 ? (
-          <>
-            <p className="text-xs text-white/30 mb-3 leading-relaxed">
-              Playing a chip is optional and <strong className="text-white/50">cannot be undone</strong> after the deadline.
-            </p>
-            {availableChips.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => {
-                  setChipPlay(chipPlay === c.id ? null : c.id);
-                  if (chipPlay === c.id) setChipTarget(null);
-                }}
-                className="flex items-center gap-3 p-3.5 rounded-lg cursor-pointer transition-all mb-1.5"
-                style={{
-                  background: chipPlay === c.id ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.02)',
-                  border: chipPlay === c.id ? '1px solid rgba(255,215,0,0.25)' : '1px solid rgba(255,255,255,0.04)',
-                }}
-              >
-                <span className="text-2xl">{c.icon}</span>
-                <div className="flex-1">
-                  <div className={`text-sm font-bold ${chipPlay === c.id ? 'text-yellow-300' : 'text-white'}`}>
-                    {c.name}
-                  </div>
-                  <div className="text-[11px] text-white/30 mt-0.5">{c.desc}</div>
-                </div>
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center"
-                  style={{
-                    border: chipPlay === c.id ? '2px solid #FFD54F' : '2px solid rgba(255,255,255,0.1)',
-                    background: chipPlay === c.id ? '#FFD54F' : 'transparent',
-                  }}
-                >
-                  {chipPlay === c.id && <span className="text-xs font-extrabold text-[#0a0a0f]">✓</span>}
+        <Section title="Game Chips" icon="&#x1F3B0;" badge={activeChipWindow ? 'AVAILABLE' : 'NO CHIP THIS WEEK'} badgeColor={activeChipWindow ? '#FFD54F' : 'rgba(255,255,255,0.25)'}>
+          {activeChipWindow ? (<>
+            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 14px', lineHeight: 1.5 }}>Optional chip play. <b style={{ color: 'rgba(255,255,255,0.5)' }}>Cannot be undone</b> after submission.</p>
+            {availableChips.map(c => (
+              <div key={c.id} onClick={() => { if (isLocked) return; setChipPlay(chipPlay === c.id ? null : c.id); setChipTarget(null); }}
+                style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', background: chipPlay === c.id ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.02)', border: chipPlay === c.id ? '1px solid rgba(255,215,0,0.25)' : '1px solid rgba(255,255,255,0.04)', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', marginBottom: '6px' }}>
+                <span style={{ fontSize: '24px' }}>{c.icon}</span>
+                <div style={{ flex: 1 }}><div style={{ fontSize: '14px', fontWeight: 700, color: chipPlay === c.id ? '#FFD54F' : '#fff' }}>{c.name}</div><div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{c.desc}</div></div>
+                <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: chipPlay === c.id ? '2px solid #FFD54F' : '2px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: chipPlay === c.id ? '#FFD54F' : 'transparent' }}>
+                  {chipPlay === c.id && <span style={{ fontSize: '12px', color: '#0a0a0f', fontWeight: 800 }}>&#x2713;</span>}
                 </div>
               </div>
             ))}
-
-            {/* Assistant Manager target picker */}
             {chipPlay === 1 && (
-              <div className="bg-yellow-300/[0.04] border border-yellow-300/15 rounded-lg p-3.5 mt-2">
-                <p className="text-xs text-white/40 mb-2.5">Select which manager&apos;s team to copy:</p>
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-                  {allManagers
-                    .filter((m) => m.id !== activeManagerId)
-                    .map((m) => (
-                      <div
-                        key={m.id}
-                        onClick={() => setChipTarget(m.id)}
-                        className="p-2 text-center rounded-md cursor-pointer transition-all"
-                        style={{
-                          background: chipTarget === m.id ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.02)',
-                          border: chipTarget === m.id ? '1px solid rgba(255,215,0,0.3)' : '1px solid rgba(255,255,255,0.04)',
-                        }}
-                      >
-                        <div
-                          className={`text-[13px] ${chipTarget === m.id ? 'font-bold text-yellow-300' : 'font-medium text-white/50'}`}
-                        >
-                          {m.name}
-                        </div>
-                      </div>
-                    ))}
+              <div style={{ background: 'rgba(255,215,0,0.04)', border: '1px solid rgba(255,215,0,0.15)', borderRadius: '10px', padding: '14px', marginTop: '8px' }}>
+                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', margin: '0 0 10px' }}>Select which manager&#x27;s team to copy:</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: '6px' }}>
+                  {managers.filter(m => m.id !== manager?.id).map(m => (
+                    <div key={m.id} onClick={() => !isLocked && setChipTarget(m.name)} style={{ padding: '10px', textAlign: 'center', borderRadius: '8px', cursor: isLocked ? 'default' : 'pointer', background: chipTarget === m.name ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.02)', border: chipTarget === m.name ? '1px solid rgba(255,215,0,0.3)' : '1px solid rgba(255,255,255,0.04)' }}>
+                      <div style={{ fontSize: '13px', fontWeight: chipTarget === m.name ? 700 : 500, color: chipTarget === m.name ? '#FFD54F' : 'rgba(255,255,255,0.5)' }}>{m.name}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
-          </>
-        ) : (
-          <>
-            <p className="text-xs text-white/20 mb-2.5">No chip is available to play this week.</p>
-          </>
-        )}
+          </>) : (<>
+            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', margin: '0 0 10px' }}>No chip available this week.</p>
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+              {CHIPS.map(c => { const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number); const used = usedChips.includes(c.id); const future = currentWeek < lo;
+                return <div key={c.id} style={{ fontSize: '10px', padding: '4px 8px', borderRadius: '5px', background: used ? 'rgba(255,80,80,0.05)' : 'rgba(255,255,255,0.02)', color: used ? 'rgba(255,80,80,0.4)' : future ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.03)', textDecoration: used ? 'line-through' : 'none' }}>{c.icon} W{lo}-{hi} {c.name}</div>;
+              })}
+            </div>
+          </>)}
+        </Section>
 
-        {/* Chip schedule timeline */}
-        <div className="mt-3.5">
-          <div className="text-[10px] font-bold text-white/15 tracking-wider mb-2">CHIP SCHEDULE</div>
-          <div className="flex gap-1 flex-wrap">
-            {CHIPS.map((c) => {
-              const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number);
-              const isCurrent = currentWeek >= lo && currentWeek <= hi;
-              const isUsed = usedChips.includes(c.id);
-              const isPast = currentWeek > hi;
-              return (
-                <div
-                  key={c.id}
-                  className="text-[10px] px-2 py-1 rounded"
-                  style={{
-                    background: isCurrent && !isUsed ? 'rgba(255,215,0,0.08)' : isUsed ? 'rgba(255,80,80,0.05)' : 'rgba(255,255,255,0.02)',
-                    color: isCurrent && !isUsed ? '#FFD54F' : isUsed ? 'rgba(255,80,80,0.4)' : isPast ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.2)',
-                    border: isCurrent && !isUsed ? '1px solid rgba(255,215,0,0.2)' : '1px solid rgba(255,255,255,0.03)',
-                    textDecoration: isUsed ? 'line-through' : 'none',
-                  }}
-                >
-                  {c.icon} W{lo}-{hi}
-                </div>
-              );
-            })}
-          </div>
+        <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(transparent,#0a0a0f 20%)', padding: '20px 0 10px', marginTop: '8px' }}>
+          <button onClick={() => { if (picksComplete && !isLocked) savePicks(); }} disabled={!picksComplete || isLocked || saving}
+            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', cursor: picksComplete && !isLocked && !saving ? 'pointer' : 'default', fontWeight: 800, fontSize: '15px', letterSpacing: '1.5px', background: isLocked ? 'rgba(255,80,80,0.08)' : picksComplete ? 'linear-gradient(135deg,#FF6B35,#FF8F00)' : 'rgba(255,255,255,0.04)', color: isLocked ? 'rgba(255,80,80,0.5)' : picksComplete ? '#fff' : 'rgba(255,255,255,0.15)', boxShadow: picksComplete && !isLocked ? '0 4px 20px rgba(255,107,53,0.3)' : 'none', opacity: saving ? 0.6 : 1 }}>
+            {isLocked ? '&#x1F512; PICKS LOCKED' : saving ? 'Saving...' : existingPick ? '&#x1F525; UPDATE PICKS' : picksComplete ? '&#x1F525; SUBMIT PICKS' : 'Complete all required picks to submit'}
+          </button>
+          {!picksComplete && !isLocked && (
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '8px' }}>
+              {!captain && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>&#x26A0; Captain</span>}
+              {poolStatus === 'active' && !poolPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>&#x26A0; Pool</span>}
+              {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>&#x26A0; NET</span>}
+            </div>
+          )}
         </div>
-      </Section>
-
-      {/* Submit Button */}
-      <div className="sticky bottom-0 pt-5 pb-2.5 mt-2" style={{ background: 'linear-gradient(transparent, #0a0a0f 20%)' }}>
-        <button
-          onClick={handleSubmit}
-          disabled={!picksComplete || saving}
-          className="w-full py-3.5 rounded-lg border-none font-extrabold text-[15px] tracking-wider transition-all"
-          style={{
-            cursor: picksComplete && !saving ? 'pointer' : 'default',
-            background: picksComplete ? 'linear-gradient(135deg, #FF6B35, #FF8F00)' : 'rgba(255,255,255,0.04)',
-            color: picksComplete ? '#fff' : 'rgba(255,255,255,0.15)',
-            boxShadow: picksComplete ? '0 4px 20px rgba(255,107,53,0.3)' : 'none',
-          }}
-        >
-          {saving ? '⏳ Submitting...' : picksComplete ? '🔥 SUBMIT PICKS' : 'Complete required picks to submit'}
-        </button>
-        {!picksComplete && (
-          <div className="flex gap-3 justify-center mt-2">
-            {!captain && <span className="text-[10px] text-orange-500/50">⚠ Captain</span>}
-            {isPoolActive && !poolPick && <span className="text-[10px] text-orange-500/50">⚠ Pool</span>}
-            {isDrowned && !backdoorPick && <span className="text-[10px] text-orange-500/50">⚠ Backdoor</span>}
-            {!netPick && <span className="text-[10px] text-white/15">NET (optional)</span>}
-          </div>
-        )}
       </div>
     </div>
   );
+}
+
+export default function WeeklyPicksPage() {
+  return <AuthGuard><PicksContent /></AuthGuard>;
 }
