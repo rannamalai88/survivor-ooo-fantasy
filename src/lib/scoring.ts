@@ -50,24 +50,34 @@ export function parseFSGPage(text: string): FSGSurvivorData[] {
   const lines = text.split('\n');
   
   for (const line of lines) {
-    // Match lines that contain survivor links with stats
-    // Pattern: [Full Name](/survivors/###-Name)   Tribe | ## | ## | ## | ## | ## | ## | ##
-    const match = line.match(
-      /\[([^\]]+)\]\(\/survivors\/\d+-[^)]+\)\s+(\w+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([^|]+)\|\s*([^\s|]+)/
+    // Each data row has two survivor links — we want the second one which has the name
+    // Pattern: [Full Name](/survivors/###-Name)   Tribe | ## | ## | ## | ## | ## | value | value |
+    // There may be multiple links per line, so find ALL matches of the name pattern
+    const nameMatches = [...line.matchAll(/\[([^\]]+)\]\(\/survivors\/\d+-[^)]+\)/g)];
+    
+    if (nameMatches.length < 2) continue; // Need at least 2 (photo + name link)
+    
+    // The second match is the actual name link, followed by tribe and stats
+    const secondMatch = nameMatches[1];
+    const fullName = secondMatch[1].trim();
+    const afterName = line.substring(secondMatch.index! + secondMatch[0].length);
+    
+    // After the name link: "   Tribe | ## | ## | ## | ## | ## | value | value |"
+    const statsMatch = afterName.match(
+      /\s+(\w+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([^|]+)\|\s*([^\s|]+)/
     );
     
-    if (!match) continue;
+    if (!statsMatch) continue;
     
-    const [, fullName, tribe, survPts, outPts, totalPts, rewWins, immWins, votedOutRaw, placeRaw] = match;
+    const [, tribe, survPts, outPts, totalPts, rewWins, immWins, votedOutRaw, placeRaw] = statsMatch;
     
-    // Extract display name (first name or nickname in quotes)
     const name = fullName.includes('"')
       ? fullName.match(/"([^"]+)"/)?.[1] || fullName.split(' ')[0]
       : fullName.split(' ')[0];
 
     survivors.push({
       name,
-      fullName: fullName.trim(),
+      fullName,
       tribe: tribe === 'Out' ? 'eliminated' : tribe,
       survPts: parseInt(survPts) || 0,
       outPts: parseInt(outPts) || 0,
