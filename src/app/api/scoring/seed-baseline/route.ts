@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { 
           error: 'Failed to parse FSG data',
-          debug: fsgText.substring(0, 2000),
+          debug: fsgText.substring(fsgText.indexOf('<table'), fsgText.indexOf('</table>') + 50),
           textLength: fsgText.length,
         },
         { status: 500 }
