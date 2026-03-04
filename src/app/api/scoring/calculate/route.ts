@@ -138,7 +138,7 @@ export async function POST(request: NextRequest) {
         chip_bonus: result.chipBonusPoints,
         voted_out_bonus: result.teamVotedOutBonus,
         captain_lost: result.captainLost,
-        chip_played: result.chipPlayed,
+        chip_played: picks?.chip_played || null,
         chip_detail: result.chipDetail,
         net_correct: netCorrect,
         updated_at: new Date().toISOString(),
