@@ -3,15 +3,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { parseFSGPage } from '@/lib/scoring';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
 const FSG_URL = 'https://www.fantasysurvivorgame.com/survivors/season/50';
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
     const { seasonId } = await request.json();
 
     if (!seasonId) {
