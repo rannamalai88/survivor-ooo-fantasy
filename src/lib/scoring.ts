@@ -47,24 +47,24 @@ export interface ManagerEpisodeResult {
  */
 export function parseFSGPage(text: string): FSGSurvivorData[] {
   const survivors: FSGSurvivorData[] = [];
-  const lines = text.split('\n');
   
-  for (const line of lines) {
-    // Each data row has two survivor links — we want the second one which has the name
-    // Pattern: [Full Name](/survivors/###-Name)   Tribe | ## | ## | ## | ## | ## | value | value |
-    // There may be multiple links per line, so find ALL matches of the name pattern
-    const nameMatches = [...line.matchAll(/\[([^\]]+)\]\(\/survivors\/\d+-[^)]+\)/g)];
+  // Split by table row separator "| A lighted torch" or "| An unlit torch"
+  // Each row in the markdown table starts with "| A lighted torch |" or "| An unlit torch |"
+  const rows = text.split(/\| A[n]? (?:lighted|unlit) torch \|/);
+  
+  for (const row of rows) {
+    // Find survivor name link pattern: [Full Name](/survivors/###-Name)
+    const nameLinks = [...row.matchAll(/\[([^\]]+)\]\(\/survivors\/\d+-[^)]+\)/g)];
+    if (nameLinks.length === 0) continue;
     
-    if (nameMatches.length < 2) continue; // Need at least 2 (photo + name link)
+    // The last name link in the row is the one with "Name   Tribe"
+    const lastLink = nameLinks[nameLinks.length - 1];
+    const fullName = lastLink[1].trim();
+    const afterLink = row.substring(lastLink.index! + lastLink[0].length);
     
-    // The second match is the actual name link, followed by tribe and stats
-    const secondMatch = nameMatches[1];
-    const fullName = secondMatch[1].trim();
-    const afterName = line.substring(secondMatch.index! + secondMatch[0].length);
-    
-    // After the name link: "   Tribe | ## | ## | ## | ## | ## | value | value |"
-    const statsMatch = afterName.match(
-      /\s+(\w+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([^|]+)\|\s*([^\s|]+)/
+    // After the link: "   Tribe | 9 | 0 | 9 | 1 | 1 | — | — |"
+    const statsMatch = afterLink.match(
+      /\s+(\w+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([^|]*)\|\s*([^|\s]*)/
     );
     
     if (!statsMatch) continue;
