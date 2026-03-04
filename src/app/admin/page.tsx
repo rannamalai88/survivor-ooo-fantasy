@@ -3,18 +3,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { SEASON_ID, TRIBE_COLORS, CHIPS } from '@/lib/constants';
-import {
-  calcAllManagerScoresForEpisode,
-  calcSeasonTotals,
-  type SurvivorScore,
-  type TeamMember,
-  type WeeklyPick,
-  type EliminatedSurvivor,
-  type ManagerEpisodeScore,
-  type NetAnswer,
-  type PoolStatusRecord,
-  type QuinfectaSubmission,
-} from '@/lib/scoring';
 
 // ============================================================
 // Types
@@ -35,6 +23,16 @@ interface Manager {
   draft_position: number;
 }
 
+interface ManagerScoreResult {
+  managerId: string;
+  fantasyPoints: number;
+  captainBonus: number;
+  chipBonus: number;
+  votedOutBonus: number;
+  captainLost: boolean;
+  netCorrect: boolean;
+}
+
 // ============================================================
 // Main Component
 // ============================================================
@@ -52,19 +50,25 @@ export default function AdminScoresPage() {
   const [managers, setManagers] = useState<Manager[]>([]);
   
   // Score entry
-  const [fsgScores, setFsgScores] = useState<Record<string, number>>({}); // survivor_id → fsg_points
-  const [adjustments, setAdjustments] = useState<Record<string, number>>({}); // survivor_id → manual_adjustment
+  const [fsgScores, setFsgScores] = useState<Record<string, number>>({});
+  const [adjustments, setAdjustments] = useState<Record<string, number>>({});
+  const [votedOutBonuses, setVotedOutBonuses] = useState<Record<string, number>>({});
   const [existingScores, setExistingScores] = useState<boolean>(false);
+  const [baselineSeeded, setBaselineSeeded] = useState<boolean>(false);
 
   // NET answer
   const [netAnswerId, setNetAnswerId] = useState<string | null>(null);
   const [netTitle, setNetTitle] = useState('');
 
   // Calculated results
-  const [calcResults, setCalcResults] = useState<ManagerEpisodeScore[] | null>(null);
+  const [calcResults, setCalcResults] = useState<ManagerScoreResult[] | null>(null);
+
+  // FSG pull results
+  const [pullStatus, setPullStatus] = useState<'idle' | 'pulling' | 'done' | 'error'>('idle');
+  const [pullMessage, setPullMessage] = useState('');
 
   // Tab
-  const [tab, setTab] = useState<'scores' | 'results' | 'pool' | 'net'>('scores');
+  const [tab, setTab] = useState<'scores' | 'results' | 'net' | 'overrides'>('scores');
 
   // ---- Load ----
   useEffect(() => { loadData(); }, []);
@@ -86,6 +90,15 @@ export default function AdminScoresPage() {
       setTotalEpisodes(seasonRes.data?.total_episodes || 13);
       setSurvivors(survivorsRes.data || []);
       setManagers(managersRes.data || []);
+
+      // Check if baseline is seeded
+      const { data: baselineCheck } = await supabase
+        .from('survivor_scores')
+        .select('id')
+        .eq('season_id', SEASON_ID)
+        .eq('episode', 1)
+        .limit(1);
+      setBaselineSeeded((baselineCheck?.length || 0) > 0);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -94,7 +107,6 @@ export default function AdminScoresPage() {
   }
 
   async function loadEpisodeData(episode: number) {
-    // Load existing survivor scores for this episode
     const { data: scores } = await supabase
       .from('survivor_scores')
       .select('*')
@@ -104,26 +116,29 @@ export default function AdminScoresPage() {
     if (scores && scores.length > 0) {
       const fsg: Record<string, number> = {};
       const adj: Record<string, number> = {};
+      const vo: Record<string, number> = {};
       scores.forEach((s: any) => {
         fsg[s.survivor_id] = s.fsg_points;
-        adj[s.survivor_id] = s.manual_adjustment;
+        adj[s.survivor_id] = s.manual_adjustment || 0;
+        vo[s.survivor_id] = s.voted_out_bonus || 0;
       });
       setFsgScores(fsg);
       setAdjustments(adj);
+      setVotedOutBonuses(vo);
       setExistingScores(true);
     } else {
       setFsgScores({});
       setAdjustments({});
+      setVotedOutBonuses({});
       setExistingScores(false);
     }
 
-    // Load NET answer
     const { data: netAns } = await supabase
       .from('net_answers')
       .select('*')
       .eq('season_id', SEASON_ID)
       .eq('episode', episode)
-      .single();
+      .maybeSingle();
     
     if (netAns) {
       setNetAnswerId(netAns.correct_survivor_id);
@@ -134,41 +149,85 @@ export default function AdminScoresPage() {
     }
 
     setCalcResults(null);
+    setPullStatus('idle');
+    setPullMessage('');
   }
 
-  // ---- Save Survivor Scores ----
-  async function saveSurvivorScores() {
+  // ---- Seed Episode 1 Baseline ----
+  async function seedBaseline() {
+    try {
+      setSaving(true);
+      setError(null);
+      const res = await fetch('/api/scoring/seed-baseline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seasonId: SEASON_ID }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setBaselineSeeded(true);
+      setSuccess(data.message);
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ---- Pull Scores from FSG ----
+  async function pullFromFSG() {
+    try {
+      setPullStatus('pulling');
+      setError(null);
+      const res = await fetch('/api/scoring/scrape-fsg', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode: selectedEpisode, seasonId: SEASON_ID }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setPullStatus('done');
+      setPullMessage(`${data.survivorsScored} survivors scored` +
+        (data.eliminations?.length ? `, ${data.eliminations.length} new elimination(s)` : ''));
+
+      // Reload episode data to show the pulled scores
+      await loadEpisodeData(selectedEpisode);
+      setExistingScores(true);
+
+      setSuccess(`FSG scores pulled for Episode ${selectedEpisode}!`);
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (err: any) {
+      setPullStatus('error');
+      setError(err.message);
+    }
+  }
+
+  // ---- Save manual adjustments ----
+  async function saveAdjustments() {
     try {
       setSaving(true);
       setError(null);
 
-      const rows = survivors.map(s => ({
-        season_id: SEASON_ID,
-        survivor_id: s.id,
-        episode: selectedEpisode,
-        fsg_points: fsgScores[s.id] || 0,
-        manual_adjustment: adjustments[s.id] || 0,
-        final_points: (fsgScores[s.id] || 0) + (adjustments[s.id] || 0),
-        updated_at: new Date().toISOString(),
-      }));
+      for (const survivorId of Object.keys(adjustments)) {
+        const adj = adjustments[survivorId] || 0;
+        const fsg = fsgScores[survivorId] || 0;
+        const vo = votedOutBonuses[survivorId] || 0;
 
-      if (existingScores) {
-        // Delete existing and re-insert (simpler than upsert for bulk)
         await supabase
           .from('survivor_scores')
-          .delete()
+          .update({
+            manual_adjustment: adj,
+            final_points: fsg + adj + vo,
+            updated_at: new Date().toISOString(),
+          })
           .eq('season_id', SEASON_ID)
+          .eq('survivor_id', survivorId)
           .eq('episode', selectedEpisode);
       }
 
-      const { error: insertErr } = await supabase
-        .from('survivor_scores')
-        .insert(rows);
-      
-      if (insertErr) throw insertErr;
-
-      setExistingScores(true);
-      setSuccess('Survivor scores saved!');
+      setSuccess('Adjustments saved!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
       setError(err.message);
@@ -182,19 +241,19 @@ export default function AdminScoresPage() {
     if (!netAnswerId) return;
     try {
       setSaving(true);
-      // Upsert
-      await supabase
-        .from('net_answers')
-        .delete()
-        .eq('season_id', SEASON_ID)
-        .eq('episode', selectedEpisode);
-      
-      await supabase.from('net_answers').insert({
-        season_id: SEASON_ID,
-        episode: selectedEpisode,
-        correct_survivor_id: netAnswerId,
-        episode_title: netTitle,
+      const res = await fetch('/api/scoring/override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set_net_answer',
+          seasonId: SEASON_ID,
+          episode: selectedEpisode,
+          correctSurvivorId: netAnswerId,
+          episodeTitle: netTitle,
+        }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
       setSuccess('NET answer saved!');
       setTimeout(() => setSuccess(null), 3000);
@@ -206,115 +265,51 @@ export default function AdminScoresPage() {
   }
 
   // ---- Calculate & Save Manager Scores ----
-  async function calculateAndSaveManagerScores() {
+  async function calculateManagerScores() {
     try {
       setSaving(true);
       setError(null);
 
-      // Fetch all data needed for calculation
-      const [teamsRes, picksRes, scoresRes, elimRes, poolRes, netRes] = await Promise.all([
-        supabase.from('teams').select('manager_id, survivor_id, is_active').eq('season_id', SEASON_ID),
-        supabase.from('weekly_picks').select('*').eq('season_id', SEASON_ID).eq('episode', selectedEpisode),
-        supabase.from('survivor_scores').select('*').eq('season_id', SEASON_ID).eq('episode', selectedEpisode),
-        supabase.from('survivors').select('id, elimination_order, eliminated_episode, has_idol').eq('season_id', SEASON_ID).not('eliminated_episode', 'is', null),
-        supabase.from('pool_status').select('manager_id, status, weeks_survived').eq('season_id', SEASON_ID),
-        supabase.from('net_answers').select('*').eq('season_id', SEASON_ID).eq('episode', selectedEpisode).single(),
-      ]);
-
-      // Build data structures
-      const allTeams = new Map<string, TeamMember[]>();
-      (teamsRes.data || []).forEach((t: any) => {
-        const arr = allTeams.get(t.manager_id) || [];
-        arr.push({ survivor_id: t.survivor_id, is_active: t.is_active });
-        allTeams.set(t.manager_id, arr);
+      const res = await fetch('/api/scoring/calculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ episode: selectedEpisode, seasonId: SEASON_ID }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-      const allPicks = new Map<string, WeeklyPick>();
-      (picksRes.data || []).forEach((p: any) => {
-        allPicks.set(p.manager_id, p);
-      });
-
-      const allScores: SurvivorScore[] = (scoresRes.data || []).map((s: any) => ({
-        survivor_id: s.survivor_id,
-        episode: s.episode,
-        fsg_points: s.fsg_points,
-        manual_adjustment: s.manual_adjustment,
-        final_points: s.final_points,
-      }));
-
-      const eliminated: EliminatedSurvivor[] = (elimRes.data || []).map((e: any) => ({
-        survivor_id: e.id,
-        elimination_order: e.elimination_order || 0,
-        eliminated_episode: e.eliminated_episode || 0,
-        has_idol: e.has_idol || false,
-      }));
-
-      const netAnswer: NetAnswer | null = netRes.data ? {
-        episode: netRes.data.episode,
-        correct_survivor_id: netRes.data.correct_survivor_id,
-      } : null;
-
-      const poolStatuses = new Map<string, PoolStatusRecord>();
-      (poolRes.data || []).forEach((p: any) => {
-        poolStatuses.set(p.manager_id, {
-          manager_id: p.manager_id,
-          status: p.status,
-          weeks_survived: p.weeks_survived || 0,
-        });
-      });
-
-      // Calculate
-      const results = calcAllManagerScoresForEpisode(
-        selectedEpisode,
-        managers,
-        allTeams,
-        allScores,
-        allPicks,
-        eliminated,
-        netAnswer,
-        poolStatuses,
-        null, // soleSurvivorId — null until finale
-      );
-
-      setCalcResults(results);
-
-      // Save to manager_scores
-      await supabase
-        .from('manager_scores')
-        .delete()
-        .eq('season_id', SEASON_ID)
-        .eq('episode', selectedEpisode);
-
-      const managerScoreRows = results.map(r => ({
-        season_id: SEASON_ID,
-        manager_id: r.manager_id,
-        episode: r.episode,
-        fantasy_points: r.fantasy_total,
-        voted_out_bonus: r.voted_out_bonus,
-        pool_weeks_survived: r.pool_weeks_survived,
-        net_correct: r.net_correct,
-        chip_effect_detail: r.chip_effect_detail || null,
-        updated_at: new Date().toISOString(),
-      }));
-
-      const { error: msErr } = await supabase
-        .from('manager_scores')
-        .insert(managerScoreRows);
-      if (msErr) throw msErr;
-
-      // Now recalculate season totals
-      await recalcSeasonTotals();
-
-      // Log activity
-      await supabase.from('activity_log').insert({
-        season_id: SEASON_ID,
-        type: 'score',
-        message: `Episode ${selectedEpisode} scores calculated and saved`,
-        metadata: { episode: selectedEpisode },
-      });
-
-      setSuccess('Manager scores calculated and saved!');
+      setCalcResults(data.results);
       setTab('results');
+      setSuccess(`Manager scores calculated for Episode ${selectedEpisode}! Totals and rankings updated.`);
+      setTimeout(() => setSuccess(null), 4000);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ---- Override: Idol Penalty ----
+  const [idolSurvivorId, setIdolSurvivorId] = useState('');
+  async function applyIdolPenalty() {
+    if (!idolSurvivorId) return;
+    try {
+      setSaving(true);
+      const res = await fetch('/api/scoring/override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'idol_penalty',
+          seasonId: SEASON_ID,
+          survivorId: idolSurvivorId,
+          episode: selectedEpisode,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setSuccess('Idol penalty (-5) applied!');
+      setIdolSurvivorId('');
+      await loadEpisodeData(selectedEpisode);
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
       setError(err.message);
@@ -323,86 +318,34 @@ export default function AdminScoresPage() {
     }
   }
 
-  // ---- Recalculate Season Totals ----
-  async function recalcSeasonTotals() {
+  // ---- Override: Manager Score ----
+  const [overrideMgrId, setOverrideMgrId] = useState('');
+  const [overrideEp, setOverrideEp] = useState(2);
+  const [overrideScore, setOverrideScore] = useState(0);
+  async function applyManagerOverride() {
+    if (!overrideMgrId) return;
     try {
-      // Fetch ALL manager_scores across ALL episodes
-      const { data: allMS } = await supabase
-        .from('manager_scores')
-        .select('*')
-        .eq('season_id', SEASON_ID);
-
-      const { data: poolData } = await supabase
-        .from('pool_status')
-        .select('manager_id, status, weeks_survived')
-        .eq('season_id', SEASON_ID);
-
-      const { data: quinfectaData } = await supabase
-        .from('quinfecta_submissions')
-        .select('*')
-        .eq('season_id', SEASON_ID);
-
-      // Build structures
-      const allEpScores = (allMS || []).map((s: any) => ({
-        manager_id: s.manager_id,
-        episode: s.episode,
-        base_team_points: 0,
-        captain_bonus: 0,
-        chip_effect_points: 0,
-        chip_effect_detail: s.chip_effect_detail || '',
-        voted_out_bonus: s.voted_out_bonus || 0,
-        idol_penalty: 0,
-        sole_survivor_bonus: 0,
-        fantasy_total: s.fantasy_points,
-        net_correct: s.net_correct,
-        net_points: s.net_correct ? 3 : 0,
-        pool_weeks_survived: s.pool_weeks_survived || 0,
-      }));
-
-      const poolStatuses = new Map<string, PoolStatusRecord>();
-      (poolData || []).forEach((p: any) => {
-        poolStatuses.set(p.manager_id, {
-          manager_id: p.manager_id,
-          status: p.status,
-          weeks_survived: p.weeks_survived || 0,
-        });
+      setSaving(true);
+      const res = await fetch('/api/scoring/override', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'override_manager_score',
+          seasonId: SEASON_ID,
+          managerId: overrideMgrId,
+          episode: overrideEp,
+          newScore: overrideScore,
+          reason: 'manual commissioner override',
+        }),
       });
-
-      const quinfectas = new Map<string, QuinfectaSubmission>();
-      (quinfectaData || []).forEach((q: any) => {
-        quinfectas.set(q.manager_id, q);
-      });
-
-      const totals = calcSeasonTotals(
-        managers,
-        allEpScores,
-        poolStatuses,
-        totalEpisodes,
-        quinfectas,
-        null, // actualFinishOrder — null until finale
-      );
-
-      // Save to manager_totals
-      await supabase
-        .from('manager_totals')
-        .delete()
-        .eq('season_id', SEASON_ID);
-
-      const totalRows = totals.map(t => ({
-        season_id: SEASON_ID,
-        manager_id: t.manager_id,
-        fantasy_total: t.fantasy_total,
-        pool_score: t.pool_score,
-        quinfecta_score: t.quinfecta_score,
-        net_total: t.net_total,
-        grand_total: t.grand_total,
-        rank: t.rank,
-        updated_at: new Date().toISOString(),
-      }));
-
-      await supabase.from('manager_totals').insert(totalRows);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setSuccess('Manager score overridden!');
+      setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
-      console.error('Failed to recalc totals:', err);
+      setError(err.message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -422,7 +365,7 @@ export default function AdminScoresPage() {
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
         <div>
           <h1 className="text-xl font-extrabold text-white tracking-wider">⚙️ Score Management</h1>
-          <p className="text-white/25 text-xs mt-1">Commissioner Panel — Enter scores, review calculations, manage pool & NET</p>
+          <p className="text-white/25 text-xs mt-1">Commissioner Panel — Pull FSG scores, review calculations, manage overrides</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-white/30">Episode:</span>
@@ -440,6 +383,28 @@ export default function AdminScoresPage() {
         </div>
       </div>
 
+      {/* Baseline Warning */}
+      {!baselineSeeded && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-yellow-400 text-sm font-bold">⚠ Episode 1 Baseline Not Seeded</p>
+              <p className="text-yellow-400/60 text-xs mt-1">
+                You need to seed Episode 1 FSG data before pulling Episode 2 scores. This sets the cumulative baseline for diffing.
+              </p>
+            </div>
+            <button
+              onClick={seedBaseline}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg font-bold text-xs tracking-wider cursor-pointer border-none"
+              style={{ background: 'linear-gradient(135deg, #FFD54F, #FF8F00)', color: '#000', opacity: saving ? 0.5 : 1 }}
+            >
+              {saving ? '⏳ Seeding...' : '🌱 Seed Episode 1 Baseline'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-red-400 text-xs">
@@ -454,16 +419,17 @@ export default function AdminScoresPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/5 rounded-lg p-1 mb-6 w-fit">
+      <div className="flex gap-1 bg-white/5 rounded-lg p-1 mb-6 w-fit overflow-x-auto">
         {[
-          { key: 'scores' as const, label: '📊 Survivor Scores', desc: 'Enter FSG points' },
-          { key: 'net' as const, label: '💬 NET Answer', desc: 'Set correct answer' },
-          { key: 'results' as const, label: '🧮 Calculate', desc: 'Review & save' },
+          { key: 'scores' as const, label: '📊 Scores' },
+          { key: 'net' as const, label: '💬 NET' },
+          { key: 'results' as const, label: '🧮 Calculate' },
+          { key: 'overrides' as const, label: '🔧 Overrides' },
         ].map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className="px-4 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer border-none"
+            className="px-4 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer border-none whitespace-nowrap"
             style={{
               background: tab === t.key ? 'rgba(255,107,53,0.15)' : 'transparent',
               color: tab === t.key ? '#FF6B35' : 'rgba(255,255,255,0.35)',
@@ -474,71 +440,101 @@ export default function AdminScoresPage() {
         ))}
       </div>
 
-      {/* ---- TAB: Survivor Scores Entry ---- */}
+      {/* ---- TAB: Scores ---- */}
       {tab === 'scores' && (
         <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
             <h2 className="text-sm font-bold text-white tracking-wider">
               Episode {selectedEpisode} — Survivor Scores
             </h2>
-            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${existingScores ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30'}`}>
-              {existingScores ? 'SAVED' : 'NOT YET SAVED'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${existingScores ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/30'}`}>
+                {existingScores ? 'SCORES LOADED' : 'NO SCORES YET'}
+              </span>
+            </div>
+          </div>
+
+          {/* Pull from FSG button */}
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <button
+              onClick={pullFromFSG}
+              disabled={pullStatus === 'pulling' || !baselineSeeded}
+              className="px-5 py-2.5 rounded-lg font-bold text-sm tracking-wider transition-all cursor-pointer border-none"
+              style={{
+                background: pullStatus === 'done' ? 'rgba(26,188,156,0.15)' :
+                  !baselineSeeded ? 'rgba(255,255,255,0.04)' :
+                  'linear-gradient(135deg, #FF6B35, #FF8F00)',
+                color: pullStatus === 'done' ? '#1ABC9C' :
+                  !baselineSeeded ? 'rgba(255,255,255,0.15)' : '#fff',
+                opacity: pullStatus === 'pulling' ? 0.5 : 1,
+              }}
+            >
+              {pullStatus === 'pulling' ? '⏳ Pulling from FSG...' :
+               pullStatus === 'done' ? '✓ Scores Pulled' :
+               '🔄 Pull Scores from FSG'}
+            </button>
+            {pullMessage && <span className="text-xs text-emerald-400">{pullMessage}</span>}
+            {!baselineSeeded && <span className="text-xs text-yellow-400/60">Seed baseline first ↑</span>}
           </div>
 
           <p className="text-xs text-white/30 mb-4">
-            Enter FSG points for each survivor. Use the Adj column for manual adjustments (e.g., -5 idol penalty).
+            Pull auto-fills FSG points and voted out bonuses. Use Adj column for manual corrections (e.g., -5 idol penalty).
           </p>
 
+          {/* Score table */}
           <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-white/[0.03]">
                   <th className="text-left p-2.5 text-white/35 font-bold tracking-wider text-[10px]">SURVIVOR</th>
-                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-20">TRIBE</th>
-                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-20">STATUS</th>
-                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-24">FSG PTS</th>
-                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-24">ADJ (+/-)</th>
-                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-20">TOTAL</th>
+                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-16">TRIBE</th>
+                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-16">STATUS</th>
+                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-20">FSG PTS</th>
+                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-16">V.O.</th>
+                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-20">ADJ</th>
+                  <th className="text-center p-2.5 text-white/35 font-bold tracking-wider text-[10px] w-16">TOTAL</th>
                 </tr>
               </thead>
               <tbody>
                 {survivors.map((s) => {
                   const fsg = fsgScores[s.id] || 0;
                   const adj = adjustments[s.id] || 0;
-                  const total = fsg + adj;
+                  const vo = votedOutBonuses[s.id] || 0;
+                  const total = fsg + adj + vo;
+                  const isEliminated = !s.is_active || (s.eliminated_episode !== null && s.eliminated_episode <= selectedEpisode);
                   return (
                     <tr key={s.id} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
                       <td className="p-2.5">
-                        <span className="font-semibold text-white/70">{s.name}</span>
+                        <span className={`font-semibold ${isEliminated ? 'text-white/30 line-through' : 'text-white/70'}`}>{s.name}</span>
                       </td>
                       <td className="p-2.5 text-center">
-                        <span className="text-[10px] font-bold tracking-wider" style={{ color: TRIBE_COLORS[s.tribe] }}>
-                          {s.tribe.toUpperCase()}
+                        <span className="text-[10px] font-bold" style={{ color: TRIBE_COLORS[s.tribe] || '#888' }}>
+                          {s.tribe?.toUpperCase()}
                         </span>
                       </td>
                       <td className="p-2.5 text-center">
-                        {s.is_active ? (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400">ACTIVE</span>
-                        ) : (
+                        {isEliminated ? (
                           <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-red-500/10 text-red-400">OUT</span>
+                        ) : (
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400">ACTIVE</span>
                         )}
                       </td>
                       <td className="p-2.5 text-center">
-                        <input
-                          type="number"
-                          value={fsg || ''}
-                          onChange={(e) => setFsgScores({ ...fsgScores, [s.id]: parseInt(e.target.value) || 0 })}
-                          className="w-16 bg-white/5 border border-white/10 rounded px-2 py-1 text-center text-white font-semibold text-xs"
-                          placeholder="0"
-                        />
+                        <span className="text-white/50 font-semibold">{fsg}</span>
+                      </td>
+                      <td className="p-2.5 text-center">
+                        {vo > 0 ? (
+                          <span className="text-emerald-400 font-bold">+{vo}</span>
+                        ) : (
+                          <span className="text-white/15">—</span>
+                        )}
                       </td>
                       <td className="p-2.5 text-center">
                         <input
                           type="number"
                           value={adj || ''}
                           onChange={(e) => setAdjustments({ ...adjustments, [s.id]: parseInt(e.target.value) || 0 })}
-                          className="w-16 bg-white/5 border border-white/10 rounded px-2 py-1 text-center font-semibold text-xs"
+                          className="w-14 bg-white/5 border border-white/10 rounded px-2 py-1 text-center font-semibold text-xs"
                           style={{ color: adj < 0 ? '#E74C3C' : adj > 0 ? '#FFD54F' : 'rgba(255,255,255,0.3)' }}
                           placeholder="0"
                         />
@@ -555,16 +551,16 @@ export default function AdminScoresPage() {
 
           <div className="flex gap-3 mt-4">
             <button
-              onClick={saveSurvivorScores}
-              disabled={saving}
-              className="px-6 py-2.5 rounded-lg font-bold text-sm tracking-wider transition-all cursor-pointer border-none"
+              onClick={saveAdjustments}
+              disabled={saving || !existingScores}
+              className="px-5 py-2.5 rounded-lg font-bold text-xs tracking-wider transition-all cursor-pointer border-none"
               style={{
-                background: 'linear-gradient(135deg, #FF6B35, #FF8F00)',
-                color: '#fff',
+                background: existingScores ? 'linear-gradient(135deg, #FF6B35, #FF8F00)' : 'rgba(255,255,255,0.04)',
+                color: existingScores ? '#fff' : 'rgba(255,255,255,0.15)',
                 opacity: saving ? 0.5 : 1,
               }}
             >
-              {saving ? '⏳ Saving...' : '💾 Save Survivor Scores'}
+              {saving ? '⏳ Saving...' : '💾 Save Adjustments'}
             </button>
           </div>
         </div>
@@ -577,7 +573,7 @@ export default function AdminScoresPage() {
             💬 Episode {selectedEpisode} — NET Answer
           </h2>
           <p className="text-xs text-white/30 mb-4">
-            Set which survivor said the episode title. This auto-scores all managers&apos; NET picks.
+            Set which survivor said the episode title. This auto-scores all managers&apos; NET picks when you Calculate.
           </p>
 
           <div className="mb-4">
@@ -629,77 +625,76 @@ export default function AdminScoresPage() {
       {/* ---- TAB: Calculate & Review ---- */}
       {tab === 'results' && (
         <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-bold text-white tracking-wider">
-              🧮 Episode {selectedEpisode} — Manager Score Calculation
-            </h2>
-          </div>
+          <h2 className="text-sm font-bold text-white tracking-wider mb-4">
+            🧮 Episode {selectedEpisode} — Calculate Manager Scores
+          </h2>
 
           <p className="text-xs text-white/30 mb-4">
-            This will calculate manager scores using: survivor FSG scores + captain 2x + chip effects + voted out bonus + NET results. Make sure survivor scores and NET answer are saved first.
+            Calculates: survivor FSG scores + captain 2x + chip effects + voted out bonus + NET. 
+            Also recalculates season totals and rankings. Make sure scores and NET answer are saved first.
           </p>
 
           <button
-            onClick={calculateAndSaveManagerScores}
-            disabled={saving}
+            onClick={calculateManagerScores}
+            disabled={saving || !existingScores}
             className="px-6 py-3 rounded-lg font-bold text-sm tracking-wider transition-all cursor-pointer border-none mb-6"
             style={{
-              background: 'linear-gradient(135deg, #FF6B35, #FF8F00)',
-              color: '#fff',
+              background: existingScores ? 'linear-gradient(135deg, #FF6B35, #FF8F00)' : 'rgba(255,255,255,0.04)',
+              color: existingScores ? '#fff' : 'rgba(255,255,255,0.15)',
               opacity: saving ? 0.5 : 1,
-              boxShadow: '0 4px 20px rgba(255,107,53,0.3)',
+              boxShadow: existingScores ? '0 4px 20px rgba(255,107,53,0.3)' : 'none',
             }}
           >
             {saving ? '⏳ Calculating...' : '🔥 Calculate & Save Manager Scores'}
           </button>
 
-          {/* Results table */}
+          {!existingScores && (
+            <p className="text-xs text-yellow-400/60 mb-4">Pull survivor scores first before calculating.</p>
+          )}
+
           {calcResults && (
             <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-white/[0.03]">
                     <th className="text-left p-2.5 text-white/35 font-bold text-[10px]">MANAGER</th>
-                    <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">BASE</th>
                     <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">👑 CAPT</th>
                     <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">🎰 CHIP</th>
                     <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">V.O.</th>
                     <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">💬 NET</th>
-                    <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">TOTAL</th>
+                    <th className="text-center p-2.5 text-white/35 font-bold text-[10px]">FANTASY</th>
                   </tr>
                 </thead>
                 <tbody>
                   {calcResults
-                    .sort((a, b) => b.fantasy_total - a.fantasy_total)
+                    .sort((a, b) => b.fantasyPoints - a.fantasyPoints)
                     .map((r) => {
-                      const mgr = managers.find(m => m.id === r.manager_id);
+                      const mgr = managers.find(m => m.id === r.managerId);
                       return (
-                        <tr key={r.manager_id} className="border-t border-white/[0.03]">
+                        <tr key={r.managerId} className="border-t border-white/[0.03]">
                           <td className="p-2.5 font-bold text-white">{mgr?.name || '?'}</td>
-                          <td className="p-2.5 text-center text-white/50">{r.base_team_points}</td>
                           <td className="p-2.5 text-center">
-                            <span className={r.captain_bonus > 0 ? 'text-yellow-300 font-bold' : 'text-white/20'}>
-                              +{r.captain_bonus}
+                            <span className={r.captainBonus > 0 ? 'text-yellow-300 font-bold' : 'text-white/20'}>
+                              {r.captainBonus > 0 ? `+${r.captainBonus}` : '—'}
                             </span>
+                            {r.captainLost && <span className="text-red-400 text-[9px] ml-1">LOST</span>}
                           </td>
                           <td className="p-2.5 text-center">
-                            {r.chip_effect_points > 0 ? (
-                              <span className="text-orange-400 font-bold" title={r.chip_effect_detail}>
-                                +{r.chip_effect_points}
-                              </span>
+                            {r.chipBonus > 0 ? (
+                              <span className="text-orange-400 font-bold">+{r.chipBonus}</span>
                             ) : (
                               <span className="text-white/20">—</span>
                             )}
                           </td>
                           <td className="p-2.5 text-center">
-                            {r.voted_out_bonus > 0 ? (
-                              <span className="text-emerald-400">+{r.voted_out_bonus}</span>
+                            {r.votedOutBonus > 0 ? (
+                              <span className="text-emerald-400">+{r.votedOutBonus}</span>
                             ) : (
                               <span className="text-white/20">—</span>
                             )}
                           </td>
                           <td className="p-2.5 text-center">
-                            {r.net_correct ? (
+                            {r.netCorrect ? (
                               <span className="text-purple-400 font-bold">+3 ✓</span>
                             ) : (
                               <span className="text-white/20">✗</span>
@@ -707,7 +702,7 @@ export default function AdminScoresPage() {
                           </td>
                           <td className="p-2.5 text-center">
                             <span className="text-white font-extrabold text-sm px-2 py-0.5 rounded bg-white/5">
-                              {r.fantasy_total + r.net_points}
+                              {r.fantasyPoints}
                             </span>
                           </td>
                         </tr>
@@ -717,6 +712,84 @@ export default function AdminScoresPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ---- TAB: Overrides ---- */}
+      {tab === 'overrides' && (
+        <div className="space-y-4">
+          {/* Idol Penalty */}
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+            <h3 className="text-sm font-bold text-white mb-3">🔥 Idol-in-Pocket Penalty (-5)</h3>
+            <div className="flex items-center gap-3 flex-wrap">
+              <select
+                value={idolSurvivorId}
+                onChange={(e) => setIdolSurvivorId(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-xs text-white"
+              >
+                <option value="">Select survivor...</option>
+                {survivors.filter(s => !s.is_active).map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={applyIdolPenalty}
+                disabled={!idolSurvivorId || saving}
+                className="px-4 py-1.5 rounded-lg font-bold text-xs cursor-pointer border-none"
+                style={{
+                  background: idolSurvivorId ? 'rgba(231,76,60,0.15)' : 'rgba(255,255,255,0.04)',
+                  color: idolSurvivorId ? '#E74C3C' : 'rgba(255,255,255,0.15)',
+                }}
+              >
+                Apply -5
+              </button>
+            </div>
+          </div>
+
+          {/* Manager Score Override */}
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+            <h3 className="text-sm font-bold text-white mb-3">📝 Override Manager Fantasy Score</h3>
+            <p className="text-xs text-white/25 mb-3">Directly set a manager&apos;s fantasy points for a specific episode. Use sparingly.</p>
+            <div className="flex items-center gap-3 flex-wrap">
+              <select
+                value={overrideMgrId}
+                onChange={(e) => setOverrideMgrId(e.target.value)}
+                className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-xs text-white"
+              >
+                <option value="">Select manager...</option>
+                {managers.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+              <select
+                value={overrideEp}
+                onChange={(e) => setOverrideEp(Number(e.target.value))}
+                className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-xs text-white"
+              >
+                {Array.from({ length: totalEpisodes - 1 }, (_, i) => i + 2).map(ep => (
+                  <option key={ep} value={ep}>Ep. {ep}</option>
+                ))}
+              </select>
+              <input
+                type="number"
+                value={overrideScore}
+                onChange={(e) => setOverrideScore(parseInt(e.target.value) || 0)}
+                className="w-20 bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-xs text-white text-center"
+                placeholder="Score"
+              />
+              <button
+                onClick={applyManagerOverride}
+                disabled={!overrideMgrId || saving}
+                className="px-4 py-1.5 rounded-lg font-bold text-xs cursor-pointer border-none"
+                style={{
+                  background: overrideMgrId ? 'linear-gradient(135deg, #FF6B35, #FF8F00)' : 'rgba(255,255,255,0.04)',
+                  color: overrideMgrId ? '#fff' : 'rgba(255,255,255,0.15)',
+                }}
+              >
+                Apply Override
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
