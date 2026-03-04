@@ -48,44 +48,84 @@ export interface ManagerEpisodeResult {
 export function parseFSGPage(text: string): FSGSurvivorData[] {
   const survivors: FSGSurvivorData[] = [];
   
-  // Split by table row separator "| A lighted torch" or "| An unlit torch"
-  // Each row in the markdown table starts with "| A lighted torch |" or "| An unlit torch |"
-  const rows = text.split(/\| A[n]? (?:lighted|unlit) torch \|/);
+  // The FSG page has HTML table rows with survivor data
+  // Each row: <tr>...<a href="/survivors/###-Name">Full Name</a>...<td>Tribe</td><td>SurvPts</td>...
+  // We'll extract data from each <tr> that contains a survivor link
   
-  for (const row of rows) {
-    // Find survivor name link pattern: [Full Name](/survivors/###-Name)
-    const nameLinks = [...row.matchAll(/\[([^\]]+)\]\(\/survivors\/\d+-[^)]+\)/g)];
-    if (nameLinks.length === 0) continue;
+  // Find all table rows containing survivor links
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  
+  while ((rowMatch = rowRegex.exec(text)) !== null) {
+    const rowHtml = rowMatch[1];
     
-    // The last name link in the row is the one with "Name   Tribe"
-    const lastLink = nameLinks[nameLinks.length - 1];
-    const fullName = lastLink[1].trim();
-    const afterLink = row.substring(lastLink.index! + lastLink[0].length);
+    // Check if this row has a survivor link
+    const survivorLinkMatch = rowHtml.match(/<a[^>]*href="\/survivors\/\d+-[^"]*"[^>]*>([^<]+)<\/a>/);
+    if (!survivorLinkMatch) continue;
     
-    // After the link: "   Tribe | 9 | 0 | 9 | 1 | 1 | — | — |"
-    const statsMatch = afterLink.match(
-      /\s+(\w+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([^|]*)\|\s*([^|\s]*)/
-    );
+    const fullName = survivorLinkMatch[1].trim();
     
-    if (!statsMatch) continue;
+    // Skip if this is just a photo alt text (no actual name)
+    if (fullName.startsWith('Survivor cast photo')) continue;
     
-    const [, tribe, survPts, outPts, totalPts, rewWins, immWins, votedOutRaw, placeRaw] = statsMatch;
+    // Extract all <td> contents from this row
+    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    const cells: string[] = [];
+    let tdMatch;
+    while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
+      // Strip HTML tags from cell content
+      const cellText = tdMatch[1].replace(/<[^>]+>/g, '').trim();
+      cells.push(cellText);
+    }
+    
+    // The FSG table structure has cells in this order after the survivor name cell:
+    // We need to find the tribe and numeric values
+    // The tribe is usually in the same cell as the name link, after the name
+    
+    // Try to extract tribe from the cell containing the name
+    const nameCellMatch = rowHtml.match(/<a[^>]*href="\/survivors\/\d+-[^"]*"[^>]*>[^<]+<\/a>\s*(\w+)/);
+    let tribe = nameCellMatch ? nameCellMatch[1].trim() : '';
+    
+    // Extract numbers from cells - find all cells that are just numbers or dashes
+    const numbers: (number | null)[] = [];
+    for (const cell of cells) {
+      const cleaned = cell.replace(/[*\s]/g, '');
+      if (cleaned === '—' || cleaned === '-' || cleaned === '') {
+        numbers.push(null);
+      } else if (/^\d+$/.test(cleaned)) {
+        numbers.push(parseInt(cleaned));
+      }
+    }
+    
+    // We expect at least 7 numbers: Surv Pts, Out Pts, Total Pts, Rew Wins, Imm Wins, Voted Out, Place
+    if (numbers.length < 7) continue;
+    
+    // The last 7 numeric-or-null values should be our stats
+    const stats = numbers.slice(-7);
+    const [survPts, outPts, totalPts, rewWins, immWins, votedOut, place] = stats;
     
     const name = fullName.includes('"')
       ? fullName.match(/"([^"]+)"/)?.[1] || fullName.split(' ')[0]
       : fullName.split(' ')[0];
 
+    // If tribe is empty, check if it's "Out" (eliminated survivors)
+    if (!tribe || tribe.length > 10) {
+      // Try harder - look for tribe name near the survivor link
+      const tribeMatch = rowHtml.match(/(?:Vatu|Kalo|Cila|Out)/i);
+      tribe = tribeMatch ? tribeMatch[0] : 'Unknown';
+    }
+
     survivors.push({
       name,
       fullName,
       tribe: tribe === 'Out' ? 'eliminated' : tribe,
-      survPts: parseInt(survPts) || 0,
-      outPts: parseInt(outPts) || 0,
-      totalPts: parseInt(totalPts) || 0,
-      rewWins: parseInt(rewWins) || 0,
-      immWins: parseInt(immWins) || 0,
-      votedOut: votedOutRaw.trim() === '—' ? null : parseInt(votedOutRaw.replace('*', '').trim()) || null,
-      place: placeRaw.trim() === '—' ? null : parseInt(placeRaw.trim()) || null,
+      survPts: survPts ?? 0,
+      outPts: outPts ?? 0,
+      totalPts: totalPts ?? 0,
+      rewWins: rewWins ?? 0,
+      immWins: immWins ?? 0,
+      votedOut: votedOut,
+      place: place,
     });
   }
 
