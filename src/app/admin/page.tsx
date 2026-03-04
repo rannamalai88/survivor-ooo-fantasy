@@ -164,7 +164,7 @@ export default function AdminScoresPage() {
         body: JSON.stringify({ seasonId: SEASON_ID }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!res.ok) throw new Error(data.error + (data.debug ? ' | DEBUG: ' + data.debug.substring(0, 500) : ''));
       setBaselineSeeded(true);
       setSuccess(data.message);
       setTimeout(() => setSuccess(null), 4000);

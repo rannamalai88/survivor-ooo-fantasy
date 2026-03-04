@@ -23,7 +23,15 @@ export async function POST(request: NextRequest) {
     const fsgData = parseFSGPage(fsgText);
 
     if (fsgData.length === 0) {
-      return NextResponse.json({ error: 'Failed to parse FSG data' }, { status: 500 });
+ // Return a snippet of what we got so we can debug the parser
+      return NextResponse.json(
+        { 
+          error: 'Failed to parse FSG data',
+          debug: fsgText.substring(0, 2000),
+          textLength: fsgText.length,
+        },
+        { status: 500 }
+      );
     }
 
     // Get DB survivors
