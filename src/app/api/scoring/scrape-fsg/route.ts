@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
         nameToSurvivor[clean.toLowerCase()] ||
         nameToSurvivor[fsgName.toLowerCase()] ||
         // Try partial match as last resort
-        dbSurvivors.find(
+        dbSurvivors!.find(
           (s) =>
             s.name.toLowerCase() === clean.toLowerCase() ||
             s.full_name.toLowerCase().includes(clean.toLowerCase())
