@@ -5,19 +5,6 @@
 
 // ---------- TYPES ----------
 
-export interface FSGSurvivorData {
-  name: string;
-  fullName: string;
-  tribe: string;
-  survPts: number;
-  outPts: number;
-  totalPts: number;
-  rewWins: number;
-  immWins: number;
-  votedOut: number | null;
-  place: number | null;
-}
-
 export interface ManagerEpisodeResult {
   managerId: string;
   managerName: string;
@@ -34,102 +21,6 @@ export interface ManagerEpisodeResult {
   teamVotedOutBonus: number;
   fantasyPoints: number;
   netCorrect: boolean;
-}
-
-// ---------- FSG HTML PARSER ----------
-
-/**
- * Parse the FSG /survivors/season/50 page.
- * Works with the markdown-style text returned by fetch.
- * 
- * Each survivor row looks like:
- * | torch | [Full Name](/survivors/ID-Name)   Tribe | Surv Pts | Out Pts | Total Pts | Rew Wins | Imm Wins | Voted Out | Place |
- */
-export function parseFSGPage(text: string): FSGSurvivorData[] {
-  const survivors: FSGSurvivorData[] = [];
-  
-  // The FSG page has HTML table rows with survivor data
-  // Each row: <tr>...<a href="/survivors/###-Name">Full Name</a>...<td>Tribe</td><td>SurvPts</td>...
-  // We'll extract data from each <tr> that contains a survivor link
-  
-  // Find all table rows containing survivor links
-  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-  let rowMatch;
-  
-  while ((rowMatch = rowRegex.exec(text)) !== null) {
-    const rowHtml = rowMatch[1];
-    
-    // Check if this row has a survivor link
-    const survivorLinkMatch = rowHtml.match(/<a[^>]*href="\/survivors\/\d+-[^"]*"[^>]*>([^<]+)<\/a>/);
-    if (!survivorLinkMatch) continue;
-    
-    const fullName = survivorLinkMatch[1].trim();
-    
-    // Skip if this is just a photo alt text (no actual name)
-    if (fullName.startsWith('Survivor cast photo')) continue;
-    
-    // Extract all <td> contents from this row
-    const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    const cells: string[] = [];
-    let tdMatch;
-    while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
-      // Strip HTML tags from cell content
-      const cellText = tdMatch[1].replace(/<[^>]+>/g, '').trim();
-      cells.push(cellText);
-    }
-    
-    // The FSG table structure has cells in this order after the survivor name cell:
-    // We need to find the tribe and numeric values
-    // The tribe is usually in the same cell as the name link, after the name
-    
-    // Try to extract tribe from the cell containing the name
-    const nameCellMatch = rowHtml.match(/<a[^>]*href="\/survivors\/\d+-[^"]*"[^>]*>[^<]+<\/a>\s*(\w+)/);
-    let tribe = nameCellMatch ? nameCellMatch[1].trim() : '';
-    
-    // Extract numbers from cells - find all cells that are just numbers or dashes
-    const numbers: (number | null)[] = [];
-    for (const cell of cells) {
-      const cleaned = cell.replace(/[*\s]/g, '');
-      if (cleaned === '—' || cleaned === '-' || cleaned === '') {
-        numbers.push(null);
-      } else if (/^\d+$/.test(cleaned)) {
-        numbers.push(parseInt(cleaned));
-      }
-    }
-    
-    // We expect at least 7 numbers: Surv Pts, Out Pts, Total Pts, Rew Wins, Imm Wins, Voted Out, Place
-    if (numbers.length < 7) continue;
-    
-    // The last 7 numeric-or-null values should be our stats
-    const stats = numbers.slice(-7);
-    const [survPts, outPts, totalPts, rewWins, immWins, votedOut, place] = stats;
-    
-    const name = fullName.includes('"')
-      ? fullName.match(/"([^"]+)"/)?.[1] || fullName.split(' ')[0]
-      : fullName.split(' ')[0];
-
-    // If tribe is empty, check if it's "Out" (eliminated survivors)
-    if (!tribe || tribe.length > 10) {
-      // Try harder - look for tribe name near the survivor link
-      const tribeMatch = rowHtml.match(/(?:Vatu|Kalo|Cila|Out)/i);
-      tribe = tribeMatch ? tribeMatch[0] : 'Unknown';
-    }
-
-    survivors.push({
-      name,
-      fullName,
-      tribe: tribe === 'Out' ? 'eliminated' : tribe,
-      survPts: survPts ?? 0,
-      outPts: outPts ?? 0,
-      totalPts: totalPts ?? 0,
-      rewWins: rewWins ?? 0,
-      immWins: immWins ?? 0,
-      votedOut: votedOut,
-      place: place,
-    });
-  }
-
-  return survivors;
 }
 
 // ---------- EPISODE SCORING ----------

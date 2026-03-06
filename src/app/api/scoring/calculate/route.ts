@@ -6,18 +6,18 @@ import { calculateManagerFantasy, calculatePoolScore, calculateNETTotal, calcula
 export async function POST(request: NextRequest) {
   try {
     const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
     const { episode, seasonId } = await request.json();
     if (!episode || !seasonId) {
       return NextResponse.json({ error: 'Missing episode or seasonId' }, { status: 400 });
     }
 
-    // 1. Get survivor scores for this episode (with manual adjustments applied)
+    // 1. Get survivor scores for this episode
     const { data: episodeScores } = await supabase
       .from('survivor_scores')
-      .select('survivor_id, fsg_points, voted_out_bonus, manual_adjustment')
+      .select('survivor_id, fsg_points, manual_adjustment')
       .eq('season_id', seasonId)
       .eq('episode', episode);
 
@@ -25,24 +25,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No survivor scores found. Pull from FSG first.' }, { status: 400 });
     }
 
-    // Build score lookup
+    // 2. Get survivor elimination info for voted out bonus
+    const { data: survivors } = await supabase
+      .from('survivors')
+      .select('id, name, is_active, eliminated_episode, elimination_order')
+      .eq('season_id', seasonId);
+
+    // Build score lookup — combine FSG points with voted out bonus
     const survivorEpScores: Record<string, { fsgPoints: number; votedOutBonus: number; isNewlyEliminated: boolean }> = {};
     for (const s of episodeScores) {
+      const survivor = survivors?.find((sv) => sv.id === s.survivor_id);
+
+      // Voted out bonus: if this survivor was eliminated THIS episode,
+      // they earn (24 - place + 1) = elimination_order points
+      const isNewlyEliminated = survivor?.eliminated_episode === episode;
+      const votedOutBonus = isNewlyEliminated ? (survivor?.elimination_order || 0) : 0;
+
       survivorEpScores[s.survivor_id] = {
         fsgPoints: (s.fsg_points || 0) + (s.manual_adjustment || 0),
-        votedOutBonus: s.voted_out_bonus || 0,
-        isNewlyEliminated: (s.voted_out_bonus || 0) > 0,
+        votedOutBonus,
+        isNewlyEliminated,
       };
     }
 
-    // 2. Get managers
+    // 3. Get managers
     const { data: managers } = await supabase
       .from('managers')
       .select('id, name')
       .eq('season_id', seasonId);
     if (!managers?.length) return NextResponse.json({ error: 'No managers found' }, { status: 500 });
 
-    // 3. Get active team members for each manager
+    // 4. Get active team members for each manager
     const { data: teams } = await supabase
       .from('teams')
       .select('manager_id, survivor_id')
@@ -55,7 +68,7 @@ export async function POST(request: NextRequest) {
       managerTeams[t.manager_id].push(t.survivor_id);
     }
 
-    // 4. Get weekly picks
+    // 5. Get weekly picks
     const { data: weeklyPicks } = await supabase
       .from('weekly_picks')
       .select('manager_id, captain_id, chip_played, chip_target, net_pick_id')
@@ -67,7 +80,7 @@ export async function POST(request: NextRequest) {
       picksByManager[p.manager_id] = p;
     }
 
-    // 5. Check captain privilege — lost if captain was eliminated in ANY previous episode
+    // 6. Check captain privilege — lost if captain was eliminated in ANY previous episode
     const { data: prevManagerScores } = await supabase
       .from('manager_scores')
       .select('manager_id, captain_lost')
@@ -79,7 +92,7 @@ export async function POST(request: NextRequest) {
       if (ps.captain_lost) captainPrivilegeLost.add(ps.manager_id);
     }
 
-    // 6. NET answer
+    // 7. NET answer
     const { data: netAnswer } = await supabase
       .from('net_answers')
       .select('correct_survivor_id')
@@ -87,26 +100,25 @@ export async function POST(request: NextRequest) {
       .eq('episode', episode)
       .maybeSingle();
 
-    // 7. First pass — calculate base scores (needed for Assistant Manager chip)
+    // 8. First pass — calculate base scores (needed for Assistant Manager chip)
     const managerBaseScores: Record<string, number> = {};
     for (const mgr of managers) {
       const team = managerTeams[mgr.id] || [];
       const picks = picksByManager[mgr.id];
       const hasCap = !captainPrivilegeLost.has(mgr.id);
 
-      // Base = team points + captain bonus (no chip effects)
       const result = calculateManagerFantasy({
         teamSurvivorIds: team,
         captainId: picks?.captain_id || null,
         hasCaptainPrivilege: hasCap,
-        chipPlayed: null, // No chip for base calc
+        chipPlayed: null,
         chipTarget: null,
         survivorEpScores,
       });
       managerBaseScores[mgr.id] = result.fantasyPoints;
     }
 
-    // 8. Second pass — full calculation with chip effects
+    // 9. Second pass — full calculation with chip effects
     const resultRows: any[] = [];
     for (const mgr of managers) {
       const team = managerTeams[mgr.id] || [];
@@ -144,7 +156,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 9. Upsert manager scores
+    // 10. Upsert manager scores
     const { error: upsertErr } = await supabase
       .from('manager_scores')
       .upsert(resultRows, { onConflict: 'season_id,manager_id,episode' });
@@ -153,7 +165,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Save failed: ${upsertErr.message}` }, { status: 500 });
     }
 
-    // 10. Recalculate manager_totals
+    // 11. Recalculate manager_totals
     for (const mgr of managers) {
       const { data: allEpScores } = await supabase
         .from('manager_scores')
@@ -200,7 +212,7 @@ export async function POST(request: NextRequest) {
       }, { onConflict: 'season_id,manager_id' });
     }
 
-    // 11. Rank
+    // 12. Rank
     const { data: ranked } = await supabase
       .from('manager_totals')
       .select('manager_id, grand_total')
