@@ -165,6 +165,62 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Save failed: ${upsertErr.message}` }, { status: 500 });
     }
 
+        // 10b. Update pool status — increment weeks_survived for safe picks, drown if pick eliminated
+    const { data: allPoolPicks } = await supabase
+      .from('weekly_picks')
+      .select('manager_id, pool_pick_id')
+      .eq('season_id', seasonId)
+      .eq('episode', episode);
+
+    if (allPoolPicks) {
+      for (const pick of allPoolPicks) {
+        if (!pick.pool_pick_id) continue; // No pool pick submitted
+
+        // Check if the picked survivor was eliminated this episode or earlier
+        const pickedSurvivor = survivors?.find((s) => s.id === pick.pool_pick_id);
+        const pickEliminated = pickedSurvivor && !pickedSurvivor.is_active && 
+          pickedSurvivor.eliminated_episode !== null && 
+          pickedSurvivor.eliminated_episode <= episode;
+
+        // Get current pool status
+        const { data: currentPool } = await supabase
+          .from('pool_status')
+          .select('*')
+          .eq('season_id', seasonId)
+          .eq('manager_id', pick.manager_id)
+          .maybeSingle();
+
+        // Skip if already drowned/burnt/finished
+        if (currentPool && currentPool.status !== 'active') continue;
+
+        if (pickEliminated) {
+          // Pick was eliminated — manager is drowned
+          await supabase
+            .from('pool_status')
+            .upsert({
+              season_id: seasonId,
+              manager_id: pick.manager_id,
+              status: 'drowned',
+              drowned_episode: episode,
+              weeks_survived: currentPool?.weeks_survived || 0,
+            }, { onConflict: 'season_id,manager_id' });
+        } else {
+          // Pick survived — increment weeks
+          await supabase
+            .from('pool_status')
+            .upsert({
+              season_id: seasonId,
+              manager_id: pick.manager_id,
+              status: 'active',
+              weeks_survived: (currentPool?.weeks_survived || 0) + 1,
+            }, { onConflict: 'season_id,manager_id' });
+        }
+      }
+
+      // Also handle managers with no pool pick (burnt — no picks remaining)
+      // For now, skip — burnt status should be set manually via overrides
+    }
+
     // 11. Recalculate manager_totals
     for (const mgr of managers) {
       const { data: allEpScores } = await supabase
