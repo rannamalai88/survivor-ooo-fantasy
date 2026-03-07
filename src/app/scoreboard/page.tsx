@@ -32,9 +32,13 @@ interface ManagerScoreRow {
   manager_id: string;
   episode: number;
   fantasy_points: number;
+  base_team_points: number;
+  captain_bonus: number;
+  chip_bonus: number;
   voted_out_bonus: number;
   net_correct: boolean;
-  chip_effect_detail: string | null;
+  chip_played: number | null;
+  chip_detail: string | null;
 }
 
 interface WeeklyPickRow {
@@ -56,14 +60,23 @@ function heatColor(val: number, min: number, max: number): string {
   return 'rgba(231,76,60,0.15)';
 }
 
+const CHIP_NAMES: Record<number, string> = {
+  1: 'Asst Mgr',
+  2: 'Team Boost',
+  3: 'Super Capt',
+  4: 'Swap Out',
+  5: 'Player Add',
+};
+
 // ============================================================
 // Main
 // ============================================================
 export default function ScoreboardPage() {
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'survivors' | 'managers'>('survivors');
+  const [view, setView] = useState<'survivors' | 'fantasy'>('survivors');
   const [tribeFilter, setTribeFilter] = useState('All');
   const [sortBy, setSortBy] = useState<'total' | 'name'>('total');
+  const [expandedManager, setExpandedManager] = useState<string | null>(null);
 
   // Data
   const [survivors, setSurvivors] = useState<Survivor[]>([]);
@@ -84,7 +97,7 @@ export default function ScoreboardPage() {
         supabase.from('survivors').select('id, name, tribe, is_active, elimination_order, eliminated_episode').eq('season_id', SEASON_ID).order('name'),
         supabase.from('survivor_scores').select('survivor_id, episode, final_points').eq('season_id', SEASON_ID).order('episode'),
         supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
-        supabase.from('manager_scores').select('manager_id, episode, fantasy_points, voted_out_bonus, net_correct, chip_effect_detail').eq('season_id', SEASON_ID).order('episode'),
+        supabase.from('manager_scores').select('manager_id, episode, fantasy_points, base_team_points, captain_bonus, chip_bonus, voted_out_bonus, net_correct, chip_played, chip_detail').eq('season_id', SEASON_ID).order('episode'),
         supabase.from('weekly_picks').select('manager_id, episode, captain_id, chip_played').eq('season_id', SEASON_ID),
         supabase.from('teams').select('manager_id, survivor_id').eq('season_id', SEASON_ID).eq('is_active', true),
       ]);
@@ -93,7 +106,7 @@ export default function ScoreboardPage() {
       setSurvivors(survivorsRes.data || []);
       setSurvivorScores(sScoresRes.data || []);
       setManagers(managersRes.data || []);
-      setManagerScores(mScoresRes.data || []);
+      setManagerScores((mScoresRes.data || []) as ManagerScoreRow[]);
       setWeeklyPicks(picksRes.data || []);
       setTeams(teamsRes.data || []);
     } catch (err) {
@@ -130,27 +143,35 @@ export default function ScoreboardPage() {
   // ---- Manager view data ----
   const managerData = useMemo(() => {
     return managers.map(m => {
-      const scores: Record<number, number> = {};
+      const epDetails: Record<number, {
+        fantasy: number;
+        team: number;
+        captain: number;
+        votedOut: number;
+        chip: number;
+        chipPlayed: number | null;
+        chipDetail: string | null;
+        netCorrect: boolean;
+      }> = {};
       let grandTotal = 0;
-      let votedOutTotal = 0;
 
       managerScores.filter(ms => ms.manager_id === m.id).forEach(ms => {
-        scores[ms.episode] = ms.fantasy_points;
-        grandTotal += ms.fantasy_points;
-        votedOutTotal += ms.voted_out_bonus || 0;
+        epDetails[ms.episode] = {
+          fantasy: ms.fantasy_points || 0,
+          team: ms.base_team_points || 0,
+          captain: ms.captain_bonus || 0,
+          votedOut: ms.voted_out_bonus || 0,
+          chip: ms.chip_bonus || 0,
+          chipPlayed: ms.chip_played || null,
+          chipDetail: ms.chip_detail || null,
+          netCorrect: ms.net_correct || false,
+        };
+        grandTotal += ms.fantasy_points || 0;
       });
 
-      // Get captain picks per episode
-      const captains: Record<number, string | null> = {};
-      const chips: Record<number, number | null> = {};
-      weeklyPicks.filter(p => p.manager_id === m.id).forEach(p => {
-        captains[p.episode] = p.captain_id;
-        chips[p.episode] = p.chip_played;
-      });
-
-      return { ...m, scores, grandTotal, votedOutTotal, captains, chips };
+      return { ...m, epDetails, grandTotal };
     }).sort((a, b) => b.grandTotal - a.grandTotal);
-  }, [managers, managerScores, weeklyPicks]);
+  }, [managers, managerScores]);
 
   // ---- Render ----
   if (loading) {
@@ -177,13 +198,13 @@ export default function ScoreboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <div>
-          <h1 className="text-xl font-extrabold text-white tracking-wider">📊 Scoreboard</h1>
+          <h1 className="text-xl font-extrabold text-white tracking-wider">📊 Fantasy Scoring</h1>
           <p className="text-white/25 text-xs mt-1">Season 50 · Through Episode {currentEpisode}</p>
         </div>
         <div className="flex gap-1 bg-white/5 rounded-lg p-1">
           {[
             { key: 'survivors' as const, label: 'Survivors' },
-            { key: 'managers' as const, label: 'Managers' },
+            { key: 'fantasy' as const, label: 'Fantasy Scoring' },
           ].map(v => (
             <button
               key={v.key}
@@ -260,7 +281,6 @@ export default function ScoreboardPage() {
               </thead>
               <tbody>
                 {survivorData.map(s => {
-                  // Compute heat map bounds per episode
                   return (
                     <tr key={s.id} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
                       <td className="p-2.5 sticky left-0 bg-[#0d0d15] z-10">
@@ -296,7 +316,6 @@ export default function ScoreboardPage() {
                       {episodes.map(ep => {
                         const pts = s.scores[ep];
                         const isElimEp = s.eliminated_episode === ep;
-                        // Heat map: get all survivor scores for this episode
                         const allEpPts = survivorData.map(sd => sd.scores[ep] || 0).filter(p => p > 0);
                         const epMin = allEpPts.length ? Math.min(...allEpPts) : 0;
                         const epMax = allEpPts.length ? Math.max(...allEpPts) : 0;
@@ -339,71 +358,163 @@ export default function ScoreboardPage() {
         </>
       )}
 
-      {/* ======== MANAGERS VIEW ======== */}
-      {view === 'managers' && (
+      {/* ======== FANTASY SCORING VIEW ======== */}
+      {view === 'fantasy' && (
         <>
-          <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-white/[0.03]">
-                  <th className="text-left p-2.5 text-white/35 font-bold text-[10px] tracking-wider sticky left-0 bg-[#0d0d15] z-10 min-w-[100px]">MANAGER</th>
-                  {episodes.map(ep => (
-                    <th key={ep} className="text-center p-2 text-white/25 font-bold text-[9px] tracking-wider min-w-[50px]">E{ep}</th>
-                  ))}
-                  <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-14">V.O.</th>
-                  <th className="text-center p-2.5 text-white/50 font-extrabold text-[10px] tracking-wider w-16">TOTAL</th>
-                </tr>
-              </thead>
-              <tbody>
-                {managerData.map((m, mi) => {
-                  return (
-                    <tr key={m.id} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
-                      <td className="p-2.5 sticky left-0 bg-[#0d0d15] z-10">
-                        <div className="font-bold text-white text-[13px]">{m.name}</div>
-                      </td>
-                      {episodes.map(ep => {
-                        const pts = m.scores[ep] || 0;
-                        const hasChip = m.chips[ep];
-                        // Heat map across all managers for this episode
-                        const allMgrPts = managerData.map(md => md.scores[ep] || 0);
-                        const epMin = Math.min(...allMgrPts);
-                        const epMax = Math.max(...allMgrPts);
+          <p className="text-xs text-white/30 mb-4">
+            Click a manager to expand their episode-by-episode scoring breakdown.
+          </p>
 
-                        return (
-                          <td key={ep} className="p-1.5 text-center">
-                            <span
-                              className="text-[11px] font-semibold px-1.5 py-0.5 rounded"
-                              style={{ background: pts > 0 ? heatColor(pts, epMin, epMax) : 'transparent' }}
-                            >
-                              {pts || '—'}
-                            </span>
-                            {hasChip && (
-                              <div className="text-[8px] text-yellow-300 mt-0.5">🎰</div>
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="p-2.5 text-center">
-                        {m.votedOutTotal > 0 ? (
-                          <span className="text-[11px] font-semibold text-emerald-400">+{m.votedOutTotal}</span>
-                        ) : (
-                          <span className="text-white/[0.06]">—</span>
-                        )}
-                      </td>
-                      <td className="p-2.5 text-center">
-                        <span className="text-[15px] font-extrabold text-white px-2 py-0.5 rounded-md bg-white/[0.05]">
-                          {m.grandTotal}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="space-y-2">
+            {managerData.map((m, mi) => {
+              const isExpanded = expandedManager === m.id;
+              const rank = mi + 1;
+
+              return (
+                <div key={m.id} className="rounded-xl border border-white/[0.06] overflow-hidden">
+                  {/* Summary row */}
+                  <div
+                    onClick={() => setExpandedManager(isExpanded ? null : m.id)}
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer transition-all hover:bg-white/[0.02]"
+                    style={{ background: isExpanded ? 'rgba(255,107,53,0.04)' : 'rgba(255,255,255,0.01)' }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-white/20 text-xs font-bold w-6 text-center">
+                        {rank <= 3 ? ['🥇','🥈','🥉'][rank-1] : rank}
+                      </span>
+                      <span className="text-white font-bold text-sm">{m.name}</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      {/* Mini episode scores */}
+                      <div className="hidden sm:flex items-center gap-1">
+                        {episodes.map(ep => {
+                          const d = m.epDetails[ep];
+                          if (!d) return <span key={ep} className="text-white/10 text-[10px] w-7 text-center">—</span>;
+                          return (
+                            <span key={ep} className="text-white/40 text-[10px] font-semibold w-7 text-center">{d.fantasy}</span>
+                          );
+                        })}
+                      </div>
+                      <span className="text-white font-extrabold text-lg px-3 py-0.5 rounded-lg bg-white/[0.05] min-w-[50px] text-center">
+                        {m.grandTotal}
+                      </span>
+                      <span className="text-white/20 text-xs">{isExpanded ? '▲' : '▼'}</span>
+                    </div>
+                  </div>
+
+                  {/* Expanded breakdown */}
+                  {isExpanded && (
+                    <div className="border-t border-white/[0.06]">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-white/[0.03]">
+                              <th className="text-left p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">EPISODE</th>
+                              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider">TEAM</th>
+                              <th className="text-center p-2.5 text-yellow-400/50 font-bold text-[10px] tracking-wider">👑 CAPT</th>
+                              <th className="text-center p-2.5 text-emerald-400/50 font-bold text-[10px] tracking-wider">V.O.</th>
+                              <th className="text-center p-2.5 text-orange-400/50 font-bold text-[10px] tracking-wider">🎰 CHIP</th>
+                              <th className="text-center p-2.5 text-white/50 font-extrabold text-[10px] tracking-wider">TOTAL</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {episodes.map(ep => {
+                              const d = m.epDetails[ep];
+                              if (!d) {
+                                return (
+                                  <tr key={ep} className="border-t border-white/[0.03]">
+                                    <td className="p-2.5 text-white/30 font-semibold">Ep {ep}</td>
+                                    <td colSpan={5} className="p-2.5 text-center text-white/10">No scores</td>
+                                  </tr>
+                                );
+                              }
+                              return (
+                                <tr key={ep} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
+                                  <td className="p-2.5">
+                                    <span className="text-white/50 font-semibold">Ep {ep}</span>
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    <span className="text-white/60 font-semibold">{d.team}</span>
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    {d.captain > 0 ? (
+                                      <span className="text-yellow-300 font-bold">+{d.captain}</span>
+                                    ) : (
+                                      <span className="text-white/10">—</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    {d.votedOut > 0 ? (
+                                      <span className="text-emerald-400 font-bold">+{d.votedOut}</span>
+                                    ) : (
+                                      <span className="text-white/10">—</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    {d.chip > 0 ? (
+                                      <div>
+                                        <span className="text-orange-400 font-bold">+{d.chip}</span>
+                                        {d.chipPlayed && (
+                                          <div className="text-[9px] text-orange-400/50 mt-0.5">
+                                            {CHIP_NAMES[d.chipPlayed] || `Chip ${d.chipPlayed}`}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-white/10">—</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    <span className="text-white font-extrabold text-sm px-2 py-0.5 rounded bg-white/[0.05]">
+                                      {d.fantasy}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                            {/* Season total row */}
+                            <tr className="border-t-2 border-white/[0.1] bg-white/[0.02]">
+                              <td className="p-2.5">
+                                <span className="text-white/70 font-bold text-[11px]">SEASON</span>
+                              </td>
+                              <td className="p-2.5 text-center">
+                                <span className="text-white/40 font-semibold">
+                                  {episodes.reduce((s, ep) => s + (m.epDetails[ep]?.team || 0), 0)}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-center">
+                                <span className="text-yellow-300/70 font-semibold">
+                                  {(() => { const t = episodes.reduce((s, ep) => s + (m.epDetails[ep]?.captain || 0), 0); return t > 0 ? `+${t}` : '—'; })()}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-center">
+                                <span className="text-emerald-400/70 font-semibold">
+                                  {(() => { const t = episodes.reduce((s, ep) => s + (m.epDetails[ep]?.votedOut || 0), 0); return t > 0 ? `+${t}` : '—'; })()}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-center">
+                                <span className="text-orange-400/70 font-semibold">
+                                  {(() => { const t = episodes.reduce((s, ep) => s + (m.epDetails[ep]?.chip || 0), 0); return t > 0 ? `+${t}` : '—'; })()}
+                                </span>
+                              </td>
+                              <td className="p-2.5 text-center">
+                                <span className="text-white font-extrabold text-base px-2.5 py-0.5 rounded-lg" style={{ background: 'linear-gradient(135deg, rgba(255,107,53,0.15), rgba(255,143,0,0.1))' }}>
+                                  {m.grandTotal}
+                                </span>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="mt-3 text-[10px] text-white/20">
-            Manager episode totals include captain 2x multiplier. V.O. = voted out bonus points from eliminated team members. 🎰 = chip played that episode.
+            Team = base team points. 👑 Capt = captain 2x bonus. V.O. = voted out bonus. 🎰 Chip = chip effect bonus. Total = all combined.
           </div>
         </>
       )}
