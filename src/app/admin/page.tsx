@@ -54,7 +54,6 @@ export default function AdminScoresPage() {
   const [adjustments, setAdjustments] = useState<Record<string, number>>({});
   const [votedOutBonuses, setVotedOutBonuses] = useState<Record<string, number>>({});
   const [existingScores, setExistingScores] = useState<boolean>(false);
-  const [baselineSeeded, setBaselineSeeded] = useState<boolean>(false);
 
   // NET answer
   const [netAnswerId, setNetAnswerId] = useState<string | null>(null);
@@ -90,15 +89,6 @@ export default function AdminScoresPage() {
       setTotalEpisodes(seasonRes.data?.total_episodes || 13);
       setSurvivors(survivorsRes.data || []);
       setManagers(managersRes.data || []);
-
-      // Check if baseline is seeded
-      const { data: baselineCheck } = await supabase
-        .from('survivor_scores')
-        .select('id')
-        .eq('season_id', SEASON_ID)
-        .eq('episode', 1)
-        .limit(1);
-      setBaselineSeeded((baselineCheck?.length || 0) > 0);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -153,28 +143,6 @@ export default function AdminScoresPage() {
     setPullMessage('');
   }
 
-  // ---- Seed Episode 1 Baseline ----
-  async function seedBaseline() {
-    try {
-      setSaving(true);
-      setError(null);
-      const res = await fetch('/api/scoring/seed-baseline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seasonId: SEASON_ID }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error + (data.debug ? ' | DEBUG: ' + data.debug.substring(0, 500) : ''));
-      setBaselineSeeded(true);
-      setSuccess(data.message);
-      setTimeout(() => setSuccess(null), 4000);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   // ---- Pull Scores from FSG ----
   async function pullFromFSG() {
     try {
@@ -189,8 +157,10 @@ export default function AdminScoresPage() {
       if (!res.ok) throw new Error(data.error);
 
       setPullStatus('done');
-      setPullMessage(`${data.survivorsScored} survivors scored` +
-        (data.eliminations?.length ? `, ${data.eliminations.length} new elimination(s)` : ''));
+      const scoredCount = data.survivorsWithPoints || data.survivorsScored || 0;
+      setPullMessage(`${scoredCount} survivors scored` +
+        (data.eliminations?.length ? `, ${data.eliminations.length} new elimination(s)` : '') +
+        (data.warnings?.length ? ` | ${data.warnings.length} warning(s)` : ''));
 
       // Reload episode data to show the pulled scores
       await loadEpisodeData(selectedEpisode);
@@ -383,28 +353,6 @@ export default function AdminScoresPage() {
         </div>
       </div>
 
-      {/* Baseline Warning */}
-      {!baselineSeeded && (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-4 mb-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <p className="text-yellow-400 text-sm font-bold">⚠ Episode 1 Baseline Not Seeded</p>
-              <p className="text-yellow-400/60 text-xs mt-1">
-                You need to seed Episode 1 FSG data before pulling Episode 2 scores. This sets the cumulative baseline for diffing.
-              </p>
-            </div>
-            <button
-              onClick={seedBaseline}
-              disabled={saving}
-              className="px-4 py-2 rounded-lg font-bold text-xs tracking-wider cursor-pointer border-none"
-              style={{ background: 'linear-gradient(135deg, #FFD54F, #FF8F00)', color: '#000', opacity: saving ? 0.5 : 1 }}
-            >
-              {saving ? '⏳ Seeding...' : '🌱 Seed Episode 1 Baseline'}
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Messages */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-red-400 text-xs">
@@ -458,14 +406,12 @@ export default function AdminScoresPage() {
           <div className="flex items-center gap-3 mb-4 flex-wrap">
             <button
               onClick={pullFromFSG}
-              disabled={pullStatus === 'pulling' || !baselineSeeded}
+              disabled={pullStatus === 'pulling'}
               className="px-5 py-2.5 rounded-lg font-bold text-sm tracking-wider transition-all cursor-pointer border-none"
               style={{
                 background: pullStatus === 'done' ? 'rgba(26,188,156,0.15)' :
-                  !baselineSeeded ? 'rgba(255,255,255,0.04)' :
                   'linear-gradient(135deg, #FF6B35, #FF8F00)',
-                color: pullStatus === 'done' ? '#1ABC9C' :
-                  !baselineSeeded ? 'rgba(255,255,255,0.15)' : '#fff',
+                color: pullStatus === 'done' ? '#1ABC9C' : '#fff',
                 opacity: pullStatus === 'pulling' ? 0.5 : 1,
               }}
             >
@@ -474,11 +420,10 @@ export default function AdminScoresPage() {
                '🔄 Pull Scores from FSG'}
             </button>
             {pullMessage && <span className="text-xs text-emerald-400">{pullMessage}</span>}
-            {!baselineSeeded && <span className="text-xs text-yellow-400/60">Seed baseline first ↑</span>}
           </div>
 
           <p className="text-xs text-white/30 mb-4">
-            Pull auto-fills FSG points and voted out bonuses. Use Adj column for manual corrections (e.g., -5 idol penalty).
+            Pull auto-fills FSG points from episode recap. Use Adj column for manual corrections (e.g., -5 idol penalty).
           </p>
 
           {/* Score table */}
