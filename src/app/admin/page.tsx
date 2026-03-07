@@ -48,7 +48,7 @@ export default function AdminScoresPage() {
   const [totalEpisodes, setTotalEpisodes] = useState(13);
   const [survivors, setSurvivors] = useState<Survivor[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
-  
+
   // Score entry
   const [fsgScores, setFsgScores] = useState<Record<string, number>>({});
   const [adjustments, setAdjustments] = useState<Record<string, number>>({});
@@ -66,8 +66,11 @@ export default function AdminScoresPage() {
   const [pullStatus, setPullStatus] = useState<'idle' | 'pulling' | 'done' | 'error'>('idle');
   const [pullMessage, setPullMessage] = useState('');
 
+  // Episode advancing
+  const [advancing, setAdvancing] = useState(false);
+
   // Tab
-  const [tab, setTab] = useState<'scores' | 'results' | 'net' | 'overrides'>('scores');
+  const [tab, setTab] = useState<'scores' | 'results' | 'net' | 'overrides' | 'season'>('scores');
 
   // ---- Load ----
   useEffect(() => { loadData(); }, []);
@@ -102,7 +105,7 @@ export default function AdminScoresPage() {
       .select('*')
       .eq('season_id', SEASON_ID)
       .eq('episode', episode);
-    
+
     if (scores && scores.length > 0) {
       const fsg: Record<string, number> = {};
       const adj: Record<string, number> = {};
@@ -129,7 +132,7 @@ export default function AdminScoresPage() {
       .eq('season_id', SEASON_ID)
       .eq('episode', episode)
       .maybeSingle();
-    
+
     if (netAns) {
       setNetAnswerId(netAns.correct_survivor_id);
       setNetTitle(netAns.episode_title || '');
@@ -162,7 +165,6 @@ export default function AdminScoresPage() {
         (data.eliminations?.length ? `, ${data.eliminations.length} new elimination(s)` : '') +
         (data.warnings?.length ? ` | ${data.warnings.length} warning(s)` : ''));
 
-      // Reload episode data to show the pulled scores
       await loadEpisodeData(selectedEpisode);
       setExistingScores(true);
 
@@ -259,6 +261,33 @@ export default function AdminScoresPage() {
     }
   }
 
+  // ---- Advance Episode ----
+  async function advanceEpisode() {
+    if (currentEpisode >= totalEpisodes) return;
+    try {
+      setAdvancing(true);
+      setError(null);
+
+      const nextEpisode = currentEpisode + 1;
+
+      const { error: updateError } = await supabase
+        .from('seasons')
+        .update({ current_episode: nextEpisode })
+        .eq('id', SEASON_ID);
+
+      if (updateError) throw updateError;
+
+      setCurrentEpisode(nextEpisode);
+      setSelectedEpisode(nextEpisode);
+      setSuccess(`✅ Season advanced to Episode ${nextEpisode}! Managers can now submit picks for Ep. ${nextEpisode}.`);
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
   // ---- Override: Idol Penalty ----
   const [idolSurvivorId, setIdolSurvivorId] = useState('');
   async function applyIdolPenalty() {
@@ -329,6 +358,8 @@ export default function AdminScoresPage() {
     );
   }
 
+  const isFinale = currentEpisode >= totalEpisodes;
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
       {/* Header */}
@@ -369,10 +400,11 @@ export default function AdminScoresPage() {
       {/* Tabs */}
       <div className="flex gap-1 bg-white/5 rounded-lg p-1 mb-6 w-fit overflow-x-auto">
         {[
-          { key: 'scores' as const, label: '📊 Scores' },
-          { key: 'net' as const, label: '💬 NET' },
-          { key: 'results' as const, label: '🧮 Calculate' },
-          { key: 'overrides' as const, label: '🔧 Overrides' },
+          { key: 'scores' as const,   label: '📊 Scores'   },
+          { key: 'net' as const,      label: '💬 NET'       },
+          { key: 'results' as const,  label: '🧮 Calculate' },
+          { key: 'overrides' as const,label: '🔧 Overrides' },
+          { key: 'season' as const,   label: '📅 Season'   },
         ].map((t) => (
           <button
             key={t.key}
@@ -575,7 +607,7 @@ export default function AdminScoresPage() {
           </h2>
 
           <p className="text-xs text-white/30 mb-4">
-            Calculates: survivor FSG scores + captain 2x + chip effects + voted out bonus + NET. 
+            Calculates: survivor FSG scores + captain 2x + chip effects + voted out bonus + NET.
             Also recalculates season totals and rankings. Make sure scores and NET answer are saved first.
           </p>
 
@@ -733,6 +765,115 @@ export default function AdminScoresPage() {
               >
                 Apply Override
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- TAB: Season ---- */}
+      {tab === 'season' && (
+        <div className="space-y-4">
+          {/* Current Episode Status */}
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+            <h3 className="text-sm font-bold text-white mb-1">📅 Episode Progression</h3>
+            <p className="text-xs text-white/25 mb-5">
+              Advancing opens the picks page for the next episode so managers can submit captains, pool picks, and NET guesses.
+            </p>
+
+            {/* Episode tracker */}
+            <div className="flex items-center gap-3 mb-6 flex-wrap">
+              <div className="flex items-center gap-2 bg-white/[0.03] border border-white/[0.06] rounded-xl px-5 py-4">
+                <span className="text-white/30 text-xs font-bold tracking-wider uppercase">Current Episode</span>
+                <span
+                  className="text-3xl font-extrabold ml-2"
+                  style={{ background: 'linear-gradient(135deg, #FF6B35, #FFD54F)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
+                >
+                  {currentEpisode}
+                </span>
+                <span className="text-white/20 text-sm font-semibold">/ {totalEpisodes}</span>
+              </div>
+
+              <div className="text-white/15 text-lg">→</div>
+
+              <div className="flex items-center gap-2 bg-white/[0.02] border border-white/[0.04] rounded-xl px-5 py-4">
+                <span className="text-white/20 text-xs font-bold tracking-wider uppercase">Next Episode</span>
+                <span className="text-3xl font-extrabold text-white/20 ml-2">
+                  {isFinale ? '🏁' : currentEpisode + 1}
+                </span>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mb-6">
+              <div className="flex justify-between text-[10px] text-white/20 mb-1.5 font-semibold tracking-wider">
+                <span>EPISODE 1</span>
+                <span>FINALE (EP. {totalEpisodes})</span>
+              </div>
+              <div className="h-2 bg-white/[0.04] rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500"
+                  style={{
+                    width: `${((currentEpisode - 1) / (totalEpisodes - 1)) * 100}%`,
+                    background: 'linear-gradient(90deg, #FF6B35, #FFD54F)',
+                  }}
+                />
+              </div>
+              <div className="text-right text-[10px] text-white/20 mt-1">
+                {Math.round(((currentEpisode - 1) / (totalEpisodes - 1)) * 100)}% through the season
+              </div>
+            </div>
+
+            {/* Advance button */}
+            {isFinale ? (
+              <div className="flex items-center gap-3 p-4 bg-yellow-500/5 border border-yellow-500/20 rounded-xl">
+                <span className="text-2xl">🏁</span>
+                <div>
+                  <div className="text-yellow-400 font-bold text-sm">Season Complete</div>
+                  <div className="text-white/25 text-xs mt-0.5">All episodes have aired. Time to run Quinfecta scoring!</div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-4 flex-wrap">
+                <div>
+                  <button
+                    onClick={advanceEpisode}
+                    disabled={advancing}
+                    className="px-8 py-3 rounded-xl font-extrabold text-sm tracking-wider transition-all cursor-pointer border-none"
+                    style={{
+                      background: advancing ? 'rgba(255,255,255,0.04)' : 'linear-gradient(135deg, #FF6B35, #FF8F00)',
+                      color: advancing ? 'rgba(255,255,255,0.2)' : '#fff',
+                      boxShadow: advancing ? 'none' : '0 4px 20px rgba(255,107,53,0.35)',
+                      opacity: advancing ? 0.7 : 1,
+                    }}
+                  >
+                    {advancing ? '⏳ Advancing...' : `🔥 Advance to Episode ${currentEpisode + 1}`}
+                  </button>
+                  <p className="text-[10px] text-white/20 mt-2 max-w-xs">
+                    This updates <code className="text-white/30">current_episode</code> in the database.
+                    Managers will immediately see Episode {currentEpisode + 1} picks open.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Season info card */}
+          <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5">
+            <h3 className="text-sm font-bold text-white mb-3">ℹ️ Season 50 Info</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {[
+                { label: 'Total Episodes', value: totalEpisodes },
+                { label: 'Episodes Aired', value: currentEpisode - 1 },
+                { label: 'Remaining', value: totalEpisodes - currentEpisode },
+                { label: 'Managers', value: managers.length },
+                { label: 'Active Survivors', value: survivors.filter(s => s.is_active).length },
+                { label: 'Eliminated', value: survivors.filter(s => !s.is_active).length },
+              ].map(({ label, value }) => (
+                <div key={label} className="bg-white/[0.02] rounded-lg p-3 border border-white/[0.04]">
+                  <div className="text-[10px] text-white/25 font-bold tracking-wider uppercase mb-1">{label}</div>
+                  <div className="text-xl font-extrabold text-white">{value}</div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
