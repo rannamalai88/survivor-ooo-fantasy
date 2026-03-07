@@ -1,15 +1,8 @@
-// =============================================================================
-// app/api/scoring/preview-fsg/route.ts
-// =============================================================================
-// API route: GET /api/scoring/preview-fsg?episode=2
-//
-// Debug/preview endpoint — fetches and parses FSG data but does NOT write
-// to the database. Use this to verify the parser is working before committing.
-//
-// Query params:
-//   ?episode=N   — optional; filter to specific episode
-//   ?source=season|recap|both  — which page to parse (default: both)
-// =============================================================================
+// src/app/api/scoring/preview-fsg/route.ts
+// Debug/preview endpoint — tests FSG parser without writing to DB.
+// GET /api/scoring/preview-fsg
+// GET /api/scoring/preview-fsg?episode=1
+// GET /api/scoring/preview-fsg?source=season|recap|both
 
 import { NextResponse } from 'next/server';
 import {
@@ -31,7 +24,6 @@ export async function GET(request: Request) {
       fetchedAt: new Date().toISOString(),
     };
 
-    // Fetch season scores page
     if (source === 'season' || source === 'both') {
       const seasonHtml = await fetchFSGSeasonPage(50);
       const seasonScores = parseSeasonScores(seasonHtml);
@@ -49,13 +41,23 @@ export async function GET(request: Request) {
           eliminated: s.isEliminated,
         })),
       };
-      result.htmlPreview = {
+      // Debug info
+      const isHtml = seasonHtml.trimStart().startsWith('<!DOCTYPE') || seasonHtml.trimStart().startsWith('<html');
+      result.debug = {
         seasonPageLength: seasonHtml.length,
-        firstChars: seasonHtml.substring(0, 200),
+        format: isHtml ? 'raw_html' : 'markdown',
+        firstChars: seasonHtml.substring(0, 300),
+        // Show a snippet around the table to help debug
+        hasTable: seasonHtml.includes('<table'),
+        hasTr: seasonHtml.includes('<tr'),
+        hasTd: seasonHtml.includes('<td'),
+        hasSurvivorLink: seasonHtml.includes('/survivors/'),
+        tableSnippet: seasonHtml.includes('<table')
+          ? seasonHtml.substring(seasonHtml.indexOf('<table'), seasonHtml.indexOf('<table') + 500)
+          : 'no <table> found',
       };
     }
 
-    // Fetch episode recap page
     if (source === 'recap' || source === 'both') {
       const recapHtml = await fetchFSGRecapPage(50);
       const episodes = parseEpisodeRecap(recapHtml);
@@ -96,9 +98,14 @@ export async function GET(request: Request) {
           })),
       };
 
-      result.htmlPreview = {
-        ...result.htmlPreview,
+      // Recap debug info
+      const isHtml = recapHtml.trimStart().startsWith('<!DOCTYPE') || recapHtml.trimStart().startsWith('<html');
+      result.recapDebug = {
         recapPageLength: recapHtml.length,
+        format: isHtml ? 'raw_html' : 'markdown',
+        hasDt: recapHtml.includes('<dt'),
+        hasDd: recapHtml.includes('<dd'),
+        hasEpisodeHeader: recapHtml.includes('Episode 1') || recapHtml.includes('Episode 2'),
       };
     }
 
