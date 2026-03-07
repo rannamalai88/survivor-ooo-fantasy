@@ -1,9 +1,4 @@
 // src/app/api/scoring/preview-fsg/route.ts
-// Debug/preview endpoint — tests FSG parser without writing to DB.
-// GET /api/scoring/preview-fsg
-// GET /api/scoring/preview-fsg?episode=1
-// GET /api/scoring/preview-fsg?source=season|recap|both
-
 import { NextResponse } from 'next/server';
 import {
   fetchFSGSeasonPage,
@@ -33,7 +28,6 @@ export async function GET(request: Request) {
           name: s.firstName,
           fullName: s.name,
           tribe: s.tribe,
-          fsgId: s.fsgId,
           survPts: s.survPts,
           outPts: s.outPts,
           totalPts: s.totalPts,
@@ -41,20 +35,18 @@ export async function GET(request: Request) {
           eliminated: s.isEliminated,
         })),
       };
-      // Debug info
-      const isHtml = seasonHtml.trimStart().startsWith('<!DOCTYPE') || seasonHtml.trimStart().startsWith('<html');
+
+      // Dump raw TR rows that contain survivor links
+      const trMatches = seasonHtml.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+      const survivorRows = trMatches.filter(r => r.includes('/survivors/'));
+      
       result.debug = {
         seasonPageLength: seasonHtml.length,
-        format: isHtml ? 'raw_html' : 'markdown',
-        firstChars: seasonHtml.substring(0, 300),
-        // Show a snippet around the table to help debug
-        hasTable: seasonHtml.includes('<table'),
-        hasTr: seasonHtml.includes('<tr'),
-        hasTd: seasonHtml.includes('<td'),
-        hasSurvivorLink: seasonHtml.includes('/survivors/'),
-        tableSnippet: seasonHtml.includes('<table')
-          ? seasonHtml.substring(seasonHtml.indexOf('<table'), seasonHtml.indexOf('<table') + 500)
-          : 'no <table> found',
+        totalTrTags: trMatches.length,
+        survivorRowCount: survivorRows.length,
+        firstSurvivorRow: survivorRows[0]?.substring(0, 800) || 'NONE FOUND',
+        secondSurvivorRow: survivorRows[1]?.substring(0, 800) || 'NONE FOUND',
+        lastSurvivorRow: survivorRows[survivorRows.length - 1]?.substring(0, 800) || 'NONE FOUND',
       };
     }
 
@@ -98,14 +90,21 @@ export async function GET(request: Request) {
           })),
       };
 
-      // Recap debug info
-      const isHtml = recapHtml.trimStart().startsWith('<!DOCTYPE') || recapHtml.trimStart().startsWith('<html');
+      // Dump raw dt/dd elements
+      const dtMatches = recapHtml.match(/<dt[^>]*>[\s\S]*?<\/dt>/gi) || [];
+      const ddMatches = recapHtml.match(/<dd[^>]*>[\s\S]*?<\/dd>/gi) || [];
+      
       result.recapDebug = {
         recapPageLength: recapHtml.length,
-        format: isHtml ? 'raw_html' : 'markdown',
-        hasDt: recapHtml.includes('<dt'),
-        hasDd: recapHtml.includes('<dd'),
-        hasEpisodeHeader: recapHtml.includes('Episode 1') || recapHtml.includes('Episode 2'),
+        dtCount: dtMatches.length,
+        ddCount: ddMatches.length,
+        firstDt: dtMatches[0]?.substring(0, 300) || 'NONE',
+        firstDd: ddMatches[0]?.substring(0, 500) || 'NONE',
+        secondDt: dtMatches[1]?.substring(0, 300) || 'NONE',
+        firstSurvivorLinkContext: (() => {
+          const idx = recapHtml.indexOf('/survivors/');
+          return idx >= 0 ? recapHtml.substring(Math.max(0, idx - 100), idx + 200) : 'NOT FOUND';
+        })(),
       };
     }
 
@@ -113,11 +112,7 @@ export async function GET(request: Request) {
   } catch (error: any) {
     console.error('[FSG Preview] Error:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-      },
+      { success: false, error: error.message },
       { status: 500 }
     );
   }
