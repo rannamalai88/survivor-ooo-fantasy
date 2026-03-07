@@ -1,15 +1,30 @@
 // =============================================================================
 // lib/fsg-parser.ts — FSG Score Parser for Survivor OOO Fantasy League
 // =============================================================================
-// Parses FantasySurvivorGame.com to extract survivor scores.
+// Parses raw HTML from FantasySurvivorGame.com as received by Vercel fetch().
 //
-// IMPORTANT: Vercel's fetch() returns RAW HTML (with <table>, <tr>, <td> tags).
-// Claude's web_fetch returns markdown-converted text (with | pipe | tables |).
-// This parser handles BOTH formats.
+// Season page HTML structure (per survivor row):
+//   <tr>
+//     <td class="isplaying">...<img alt="A lighted torch">...</td>
+//     <td class="TableSurvImg">...<a href="/survivors/529-Tiffany">...</a>...</td>
+//     <td class="SurvInfo">
+//       <a href="/survivors/529-Tiffany"><span class="survivorname">Tiffany Ervin</span></a>
+//       <br><span class="TableTribeName"><span style="color: #00B8AD;">Kalo</span></span>
+//     </td>
+//     <td>14</td>  <!-- Surv Pts -->
+//     <td>0</td>   <!-- Out Pts -->
+//     <td>14</td>  <!-- Total Pts -->
+//     <td>2</td>   <!-- Rew Wins -->
+//     <td>2</td>   <!-- Imm Wins -->
+//     <td>&mdash;</td>  <!-- Voted Out (or number) -->
+//     <td>&mdash;</td>  <!-- Place (or number) -->
+//   </tr>
 //
-// Two data sources:
-//   1. /survivors/season/50    → Season totals per survivor
-//   2. /episode-recap/season/50 → Per-episode action breakdowns
+// Episode recap HTML structure:
+//   <dt>Win a Tribe Immunity Challenge <span class="points">(3)</span></dt>
+//   <dd><span class="text-nowrap">
+//     <a href="/survivors/529-Tiffany"><span class="survivorname" title="Tiffany Ervin">Tiffany</span></a>,
+//   </span>...</dd>
 // =============================================================================
 
 // --- Types -------------------------------------------------------------------
@@ -54,96 +69,84 @@ export interface SurvivorEpisodeScore {
 function extractFirstName(fullName: string): string {
   const nicknameMatch = fullName.match(/"([^"]+)"/);
   if (nicknameMatch) return nicknameMatch[1];
+  // Also handle &quot; from HTML
+  const htmlQuoteMatch = fullName.match(/&quot;([^&]+)&quot;/);
+  if (htmlQuoteMatch) return htmlQuoteMatch[1];
   return fullName.split(' ')[0];
 }
 
 function stripHtml(text: string): string {
-  return text.replace(/<[^>]+>/g, '').trim();
+  return text.replace(/<[^>]+>/g, '').replace(/&mdash;/g, '—').replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim();
 }
 
-// Detect whether input is raw HTML or markdown
-function isRawHtml(text: string): boolean {
-  return text.trimStart().startsWith('<!DOCTYPE') || text.trimStart().startsWith('<html');
-}
+// --- Parser 1: Season Scores (Raw HTML) --------------------------------------
 
-// --- Parser 1: Season Scores -------------------------------------------------
-
-function parseSeasonScoresFromHtml(html: string): FSGSurvivorScore[] {
+export function parseSeasonScores(html: string): FSGSurvivorScore[] {
   const results: FSGSurvivorScore[] = [];
 
-  // Extract all table rows
+  // Extract all <tr>...</tr> blocks
   const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
   let rowMatch;
 
   while ((rowMatch = rowRegex.exec(html)) !== null) {
     const rowHtml = rowMatch[1];
 
-    // Find survivor links (skip photo-only rows)
-    // Pattern: <a href="/survivors/529-Tiffany">Tiffany Ervin</a>
-    const links = [...rowHtml.matchAll(/<a[^>]*href="\/survivors\/(\d+-[^"]*)"[^>]*>([^<]+)<\/a>/g)];
-    
-    // We need at least one link with a real name (not "Survivor cast photo of...")
-    const nameLink = links.find(l => !l[2].includes('Survivor cast photo'));
-    if (!nameLink) continue;
+    // Must contain a survivorname span
+    if (!rowHtml.includes('survivorname')) continue;
 
-    const fsgId = nameLink[1];
-    const fullName = nameLink[2].trim();
+    // Extract survivor name from <span class="survivorname">Full Name</span>
+    const nameMatch = rowHtml.match(/<span\s+class="survivorname"[^>]*>([^<]+)<\/span>/);
+    if (!nameMatch) continue;
+    const fullName = nameMatch[1].trim();
 
-    // Already have this survivor? Skip duplicate rows
+    // Extract FSG ID from href="/survivors/529-Tiffany"
+    const idMatch = rowHtml.match(/href="\/survivors\/(\d+-[^"]+)"/);
+    if (!idMatch) continue;
+    const fsgId = idMatch[1];
+
+    // Skip duplicates
     if (results.find(r => r.fsgId === fsgId)) continue;
 
-    // Extract all <td> cell contents
-    const cells: string[] = [];
+    // Extract tribe from TableTribeName span
+    // Pattern: <span class="TableTribeName">...<span style="color: ...;">Kalo</span>...</span>
+    let tribe = 'Unknown';
+    const tribeMatch = rowHtml.match(/class="TableTribeName"[^>]*>[\s\S]*?<span[^>]*>([^<]+)<\/span>/);
+    if (tribeMatch) {
+      tribe = tribeMatch[1].trim();
+    }
+
+    // Extract all <td> contents (strip HTML from each)
+    const tdValues: string[] = [];
     const tdRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
     let tdMatch;
     while ((tdMatch = tdRegex.exec(rowHtml)) !== null) {
-      cells.push(stripHtml(tdMatch[1]));
+      tdValues.push(stripHtml(tdMatch[1]));
     }
 
-    // Find tribe name — it's in the cell with the survivor name, after the </a> tag
-    // Pattern: ...Tiffany Ervin</a> Kalo ...
-    // Or it might be in a separate element
-    let tribe = 'Unknown';
-    
-    // Look for tribe name right after the name link
-    const afterNameMatch = rowHtml.match(
-      new RegExp(fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<\\/a>\\s*([A-Za-z]+)')
-    );
-    if (afterNameMatch && ['Kalo', 'Vatu', 'Cila', 'Out'].includes(afterNameMatch[1])) {
-      tribe = afterNameMatch[1];
-    } else {
-      // Fallback: search cells for tribe name
-      for (const cell of cells) {
-        const tribeMatch = cell.match(/\b(Kalo|Vatu|Cila|Out)\b/i);
-        if (tribeMatch) {
-          tribe = tribeMatch[1];
-          break;
-        }
-      }
-    }
-
-    // Extract all numeric values and dashes from cells
+    // Find numeric values and dashes from the td cells
+    // The stats are in the last 7 <td> cells: SurvPts, OutPts, TotalPts, RewWins, ImmWins, VotedOut, Place
     const numericValues: (number | null)[] = [];
-    for (const cell of cells) {
-      const cleaned = cell.replace(/[*\s]/g, '').trim();
+    for (const val of tdValues) {
+      const cleaned = val.replace(/[*\s]/g, '').trim();
       if (cleaned === '—' || cleaned === '-' || cleaned === '') {
         numericValues.push(null);
       } else if (/^\d+$/.test(cleaned)) {
         numericValues.push(parseInt(cleaned, 10));
       }
+      // Skip non-numeric cells (like the image cell, name cell, etc.)
     }
 
-    // We need at least 7 numbers: Surv Pts, Out Pts, Total Pts, Rew Wins, Imm Wins, Voted Out, Place
+    // We need at least 7 numeric/null values
     if (numericValues.length < 7) continue;
 
-    // Take the last 7 values
+    // Take the last 7
     const stats = numericValues.slice(-7);
     const [survPts, outPts, totalPts, rewardWins, immunityWins, votedOut, place] = stats;
 
     results.push({
       name: fullName,
       firstName: extractFirstName(fullName),
-      tribe: tribe === 'Out' ? 'Out' : tribe,
+      tribe,
       fsgId,
       survPts: survPts ?? 0,
       outPts: outPts ?? 0,
@@ -159,234 +162,115 @@ function parseSeasonScoresFromHtml(html: string): FSGSurvivorScore[] {
   return results;
 }
 
-function parseSeasonScoresFromMarkdown(text: string): FSGSurvivorScore[] {
-  const results: FSGSurvivorScore[] = [];
-  const lines = text.split('\n');
+// --- Parser 2: Episode Recap (Raw HTML) --------------------------------------
 
-  for (const line of lines) {
-    if (line.includes('Surv Pts') || line.match(/^\|\s*---/)) continue;
+export function parseEpisodeRecap(html: string): FSGEpisodeData[] {
+  const episodes: FSGEpisodeData[] = [];
 
-    const idMatch = line.match(/\/survivors\/(\d+-[^)\]\s]+)/);
-    if (!idMatch) continue;
+  // Split by episode sections
+  // Episode headers look like: <h5>Episode 1</h5> or similar
+  // But we can also split on a pattern that includes "Episode N"
+  const epSplitRegex = /Episode\s+(\d+)/gi;
+  const epPositions: { epNum: number; index: number }[] = [];
+  let epSplitMatch;
 
-    const nameAndTribeMatch = line.match(
-      /\[([^\]]+)\]\(\/survivors\/\d+-[^)\s]+[^)]*\)\s+(Kalo|Vatu|Cila|Out)/
-    );
-    if (!nameAndTribeMatch) continue;
-
-    const fullName = nameAndTribeMatch[1];
-    const fsgId = idMatch[1];
-    const tribe = nameAndTribeMatch[2];
-
-    const afterTribe = line.substring(
-      line.indexOf(nameAndTribeMatch[2]) + nameAndTribeMatch[2].length
-    );
-    const numbers = afterTribe.match(
-      /\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|\s*([—\d*]+)\s*\|\s*([—\d]+)\s*\|?/
-    );
-    if (!numbers) continue;
-
-    const survPts = parseInt(numbers[1], 10);
-    const outPts = parseInt(numbers[2], 10);
-    const totalPts = parseInt(numbers[3], 10);
-    const rewardWins = parseInt(numbers[4], 10);
-    const immunityWins = parseInt(numbers[5], 10);
-    const votedOutStr = numbers[6];
-    const placeStr = numbers[7];
-    const votedOut = votedOutStr === '—' ? null : parseInt(votedOutStr.replace('*', ''), 10);
-    const place = placeStr === '—' ? null : parseInt(placeStr, 10);
-
-    if (!results.find((r) => r.fsgId === fsgId)) {
-      results.push({
-        name: fullName,
-        firstName: extractFirstName(fullName),
-        tribe,
-        fsgId,
-        survPts, outPts, totalPts, rewardWins, immunityWins,
-        votedOut, place,
-        isEliminated: place !== null,
-      });
+  while ((epSplitMatch = epSplitRegex.exec(html)) !== null) {
+    const epNum = parseInt(epSplitMatch[1], 10);
+    // Avoid duplicate episode numbers (the word "Episode" appears in nav too)
+    if (!epPositions.find(p => p.epNum === epNum)) {
+      epPositions.push({ epNum, index: epSplitMatch.index });
     }
   }
 
-  return results;
-}
+  for (let i = 0; i < epPositions.length; i++) {
+    const { epNum, index: startIdx } = epPositions[i];
+    const endIdx = i + 1 < epPositions.length ? epPositions[i + 1].index : html.length;
+    const section = html.substring(startIdx, endIdx);
 
-export function parseSeasonScores(text: string): FSGSurvivorScore[] {
-  if (isRawHtml(text)) {
-    return parseSeasonScoresFromHtml(text);
-  }
-  return parseSeasonScoresFromMarkdown(text);
-}
-
-// --- Parser 2: Episode Recap -------------------------------------------------
-
-function parseEpisodeRecapFromHtml(html: string): FSGEpisodeData[] {
-  const episodes: FSGEpisodeData[] = [];
-
-  // The episode recap uses <dl> (definition lists) for actions:
-  //   <dt>Action Name (points)</dt>
-  //   <dd><a href="/survivors/ID">Name</a>, ...</dd>
-  // And sections for each episode.
-  // But the structure can vary, so we'll use a robust approach:
-  // Convert HTML to a simplified text format, then parse that.
-
-  // Step 1: Extract meaningful text while preserving structure markers
-  let simplified = html
-    // Mark episode headers
-    .replace(/<h\d[^>]*>\s*Episode\s+(\d+)\s*<\/h\d>/gi, '\n###EPISODE $1###\n')
-    // Mark definition terms (action names)
-    .replace(/<dt[^>]*>([\s\S]*?)<\/dt>/gi, '\n###DT###$1###/DT###\n')
-    // Mark definition data (survivor lists)
-    .replace(/<dd[^>]*>([\s\S]*?)<\/dd>/gi, '\n###DD###$1###/DD###\n')
-    // Preserve survivor links
-    .replace(/<a[^>]*href="\/survivors\/([^"]*)"[^>]*>([^<]*)<\/a>/gi, '###LINK###$2###/LINK###')
-    // Strip remaining HTML
-    .replace(/<[^>]+>/g, ' ')
-    // Clean whitespace
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Step 2: Split by episode markers
-  const epParts = simplified.split('###EPISODE ');
-
-  for (const part of epParts) {
-    const epNumMatch = part.match(/^(\d+)###/);
-    if (!epNumMatch) continue;
-
-    const episodeNumber = parseInt(epNumMatch[1], 10);
     const votedOut: string[] = [];
     const quitEvac: string[] = [];
     const actions: FSGEpisodeAction[] = [];
 
-    // Find all DT/DD pairs
-    const dtRegex = /###DT###([\s\S]*?)###\/DT###\s*###DD###([\s\S]*?)###\/DD###/g;
-    let dtMatch;
+    // Find all <dt>...</dt> and <dd>...</dd> pairs in this section
+    // Build an array of dt/dd pairs in order
+    const dlItemRegex = /<(dt|dd)[^>]*>([\s\S]*?)<\/\1>/gi;
+    const items: { type: string; content: string }[] = [];
+    let dlMatch;
 
-    while ((dtMatch = dtRegex.exec(part)) !== null) {
-      const dtText = dtMatch[1].replace(/###[^#]*###/g, '').trim();
-      const ddText = dtMatch[2];
+    while ((dlMatch = dlItemRegex.exec(section)) !== null) {
+      items.push({ type: dlMatch[1].toLowerCase(), content: dlMatch[2] });
+    }
 
-      // Extract survivor names from links in DD
-      const names: string[] = [];
-      const linkRegex = /###LINK###([^#]+)###\/LINK###/g;
-      let linkMatch;
-      while ((linkMatch = linkRegex.exec(ddText)) !== null) {
-        names.push(linkMatch[1].trim());
-      }
+    // Process dt/dd pairs
+    let currentDt: string | null = null;
 
-      // Check if this is a "Voted out" or "Quit/Evac" section
-      if (dtText.toLowerCase().includes('voted out')) {
-        votedOut.push(...names);
-        continue;
-      }
-      if (dtText.toLowerCase().includes('quit') || dtText.toLowerCase().includes('evac')) {
-        quitEvac.push(...names);
+    for (const item of items) {
+      if (item.type === 'dt') {
+        currentDt = item.content;
         continue;
       }
 
-      // Parse action name and points: "Win a Tribe Immunity Challenge (3)"
-      const actionMatch = dtText.match(/^(.+?)\s*\((\d+)\)\s*$/);
-      if (actionMatch && names.length > 0) {
-        actions.push({
-          actionName: actionMatch[1].trim(),
-          pointValue: parseInt(actionMatch[2], 10),
-          survivors: names,
-        });
+      if (item.type === 'dd' && currentDt !== null) {
+        const dtText = stripHtml(currentDt);
+        const ddHtml = item.content;
+
+        // Extract survivor names from dd
+        // Pattern: <span class="survivorname" title="Full Name">FirstName</span>
+        // or: <a href="/survivors/..."><span class="survivorname"...>Name</span></a>
+        const names: string[] = [];
+        const nameRegex = /<span\s+class="survivorname"[^>]*>([^<]+)<\/span>/gi;
+        let nameMatch;
+        while ((nameMatch = nameRegex.exec(ddHtml)) !== null) {
+          names.push(nameMatch[1].trim());
+        }
+
+        // If no survivorname spans, try plain <a> links to /survivors/
+        if (names.length === 0) {
+          const linkRegex = /<a[^>]*href="\/survivors\/[^"]*"[^>]*>([^<]+)<\/a>/gi;
+          let linkMatch;
+          while ((linkMatch = linkRegex.exec(ddHtml)) !== null) {
+            const name = linkMatch[1].trim();
+            if (!name.includes('Survivor cast photo')) {
+              names.push(name);
+            }
+          }
+        }
+
+        // Determine if this is voted out, quit/evac, or a scoring action
+        const dtLower = dtText.toLowerCase();
+        if (dtLower.includes('voted out')) {
+          votedOut.push(...names);
+          currentDt = null;
+          continue;
+        }
+        if (dtLower.includes('quit') || dtLower.includes('evac')) {
+          quitEvac.push(...names);
+          currentDt = null;
+          continue;
+        }
+
+        // Parse action name and points
+        // DT HTML: Win a Tribe Immunity Challenge <span class="points">(3)</span>
+        // After stripping HTML, dtText = "Win a Tribe Immunity Challenge (3)"
+        const actionMatch = dtText.match(/^(.+?)\s*\((\d+)\)\s*$/);
+        if (actionMatch && names.length > 0) {
+          actions.push({
+            actionName: actionMatch[1].trim(),
+            pointValue: parseInt(actionMatch[2], 10),
+            survivors: names,
+          });
+        }
+
+        currentDt = null;
       }
     }
 
-    // Fallback: if no DT/DD found, the HTML might use a different structure
-    // Try looking for "Voted out" text directly
-    if (votedOut.length === 0) {
-      const votedOutMatch = part.match(/[Vv]oted\s+[Oo]ut[\s\S]*?###LINK###([^#]+)###\/LINK###/);
-      if (votedOutMatch) {
-        votedOut.push(votedOutMatch[1].trim());
-      }
-    }
-
-    if (actions.length > 0 || votedOut.length > 0) {
-      episodes.push({ episodeNumber, votedOut, quitEvac, actions });
+    if (actions.length > 0 || votedOut.length > 0 || quitEvac.length > 0) {
+      episodes.push({ episodeNumber: epNum, votedOut, quitEvac, actions });
     }
   }
 
   return episodes;
-}
-
-function parseEpisodeRecapFromMarkdown(text: string): FSGEpisodeData[] {
-  const episodes: FSGEpisodeData[] = [];
-  const episodeSections = text.split(/#{3,6}\s*Episode\s+/i);
-
-  for (const section of episodeSections) {
-    const epNumMatch = section.match(/^(\d+)/);
-    if (!epNumMatch) continue;
-
-    const episodeNumber = parseInt(epNumMatch[1], 10);
-    const votedOut: string[] = [];
-    const quitEvac: string[] = [];
-    const actions: FSGEpisodeAction[] = [];
-
-    const lines = section.split('\n');
-    let currentAction: { name: string; points: number } | null = null;
-    let currentSurvivors: string[] = [];
-    let inVotedOut = false;
-    let inQuitEvac = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      if (trimmed.match(/^Voted out$/i)) {
-        if (currentAction && currentSurvivors.length > 0) {
-          actions.push({ actionName: currentAction.name, pointValue: currentAction.points, survivors: [...currentSurvivors] });
-          currentAction = null; currentSurvivors = [];
-        }
-        inVotedOut = true; inQuitEvac = false; continue;
-      }
-
-      if (trimmed.match(/^Quit\/Evac$/i)) {
-        if (currentAction && currentSurvivors.length > 0) {
-          actions.push({ actionName: currentAction.name, pointValue: currentAction.points, survivors: [...currentSurvivors] });
-          currentAction = null; currentSurvivors = [];
-        }
-        inVotedOut = false; inQuitEvac = true; continue;
-      }
-
-      const actionHeaderMatch = trimmed.match(/^([A-Z][^(]+?)\s*\((\d+)\)\s*$/);
-      if (actionHeaderMatch) {
-        if (currentAction && currentSurvivors.length > 0) {
-          actions.push({ actionName: currentAction.name, pointValue: currentAction.points, survivors: [...currentSurvivors] });
-        }
-        currentAction = { name: actionHeaderMatch[1].trim(), points: parseInt(actionHeaderMatch[2], 10) };
-        currentSurvivors = [];
-        inVotedOut = false; inQuitEvac = false; continue;
-      }
-
-      const nameLinks = [...trimmed.matchAll(/\[([^\]]+)\]\(\/survivors\/[^)]+\)/g)];
-      if (nameLinks.length > 0) {
-        for (const nameLink of nameLinks) {
-          const name = nameLink[1];
-          if (inVotedOut) votedOut.push(name);
-          else if (inQuitEvac) quitEvac.push(name);
-          else if (currentAction) currentSurvivors.push(name);
-        }
-      }
-    }
-
-    if (currentAction && currentSurvivors.length > 0) {
-      actions.push({ actionName: currentAction.name, pointValue: currentAction.points, survivors: [...currentSurvivors] });
-    }
-
-    episodes.push({ episodeNumber, votedOut, quitEvac, actions });
-  }
-
-  return episodes;
-}
-
-export function parseEpisodeRecap(text: string): FSGEpisodeData[] {
-  if (isRawHtml(text)) {
-    return parseEpisodeRecapFromHtml(text);
-  }
-  return parseEpisodeRecapFromMarkdown(text);
 }
 
 // --- Score Calculator --------------------------------------------------------
@@ -424,7 +308,7 @@ const FSG_BASE_URL = 'https://www.fantasysurvivorgame.com';
 export async function fetchFSGSeasonPage(seasonNumber: number = 50): Promise<string> {
   const url = `${FSG_BASE_URL}/survivors/season/${seasonNumber}`;
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SurvivorOOOFantasy/1.0)', Accept: 'text/html,application/xhtml+xml' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SurvivorOOOFantasy/1.0)', Accept: 'text/html' },
     cache: 'no-store',
   });
   if (!response.ok) throw new Error(`FSG fetch failed: ${response.status} ${response.statusText}`);
@@ -434,7 +318,7 @@ export async function fetchFSGSeasonPage(seasonNumber: number = 50): Promise<str
 export async function fetchFSGRecapPage(seasonNumber: number = 50): Promise<string> {
   const url = `${FSG_BASE_URL}/episode-recap/season/${seasonNumber}`;
   const response = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SurvivorOOOFantasy/1.0)', Accept: 'text/html,application/xhtml+xml' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SurvivorOOOFantasy/1.0)', Accept: 'text/html' },
     cache: 'no-store',
   });
   if (!response.ok) throw new Error(`FSG episode recap fetch failed: ${response.status} ${response.statusText}`);
