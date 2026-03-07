@@ -19,6 +19,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing episode or seasonId' }, { status: 400 });
     }
 
+    // 0. Get season info — need total_episodes for the pool formula
+    const { data: seasonData } = await supabase
+      .from('seasons')
+      .select('total_episodes')
+      .eq('id', seasonId)
+      .single();
+
+    // Pool runs from episode 2 through the finale, so total pool weeks = total_episodes - 1
+    const totalWeeks = (seasonData?.total_episodes || 13) - 1;
+
     // 1. Get survivor scores for this episode
     const { data: episodeScores } = await supabase
       .from('survivor_scores')
@@ -112,9 +122,9 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 8. FIRST PASS — base fantasy score (chipPlayed: null) for every manager.
-    //    This is used as the "target score" for Chip 1 (Assistant Manager).
-    //    Because chips are excluded here, there is no circular stacking:
-    //    target score = FSG points + voted-out bonus + captain 2x, nothing more.
+    //    Used as the "target score" for Chip 1 (Assistant Manager).
+    //    No chip effects → no circular stacking possible.
+    //    Result = FSG points + voted-out bonus + captain 2x only.
     // ----------------------------------------------------------------
     const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
@@ -126,7 +136,7 @@ export async function POST(request: NextRequest) {
         teamSurvivorIds: team,
         captainId: picks?.captain_id || null,
         hasCaptainPrivilege: hasCap,
-        chipPlayed: null,   // intentionally null — no chip effects in first pass
+        chipPlayed: null,
         chipTarget: null,
         survivorEpScores,
       });
@@ -135,9 +145,7 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 9. SECOND PASS — full calculation including chip effects.
-    //
-    //    chip_target is stored as a manager NAME (from the picks UI).
-    //    We resolve it to a manager ID before looking up the base score.
+    //    chip_target stored as manager NAME from picks UI; resolve to ID.
     // ----------------------------------------------------------------
     const resultRows: any[] = [];
 
@@ -146,8 +154,6 @@ export async function POST(request: NextRequest) {
       const picks = picksByManager[mgr.id];
       const hasCap = !captainPrivilegeLost.has(mgr.id);
 
-      // Resolve chip_target: may be a manager name OR a manager UUID.
-      // Look up by ID first, then fall back to name match.
       let assistantTargetScore: number | undefined = undefined;
       if (picks?.chip_played === 1 && picks?.chip_target) {
         const targetMgr =
@@ -201,15 +207,13 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 10b. Record chips played in chips_used (idempotent — skip if already recorded)
+    // 10b. Record chips played in chips_used (idempotent)
     // ----------------------------------------------------------------
     for (const row of resultRows) {
       if (!row.chip_played) continue;
-
       const picks = picksByManager[row.manager_id];
       if (!picks?.chip_played) continue;
 
-      // Only insert if not already there (a re-calculate should not duplicate)
       const { data: existing } = await supabase
         .from('chips_used')
         .select('id')
@@ -305,7 +309,7 @@ export async function POST(request: NextRequest) {
         .eq('manager_id', mgr.id)
         .maybeSingle();
 
-      // Top fantasy score across all managers (for pool formula)
+      // Top fantasy score across all managers (for pool formula denominator)
       const { data: allTotals } = await supabase
         .from('manager_scores')
         .select('manager_id, fantasy_points')
@@ -317,7 +321,14 @@ export async function POST(request: NextRequest) {
       }
       const topFantasy = Math.max(...Object.values(managerSums), 0);
 
-      const poolScore = calculatePoolScore(poolStatus?.weeks_survived || 0, episode, topFantasy);
+      // Pool formula: (weeks_survived / total_pool_weeks) × 0.25 × top_fantasy
+      // total_pool_weeks = total_episodes - 1  (no pool pick in episode 1)
+      const poolScore = calculatePoolScore(
+        poolStatus?.weeks_survived || 0,
+        totalWeeks,
+        topFantasy
+      );
+
       const grandTotal = calculateGrandTotal(fantasyTotal, poolScore, 0, netTotal);
 
       await supabase.from('manager_totals').upsert(
