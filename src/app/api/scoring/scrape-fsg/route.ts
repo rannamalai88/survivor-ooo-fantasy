@@ -107,7 +107,7 @@ export async function POST(request: NextRequest) {
 
     // Helper to find a DB survivor from an FSG name
     function findSurvivor(fsgName: string) {
-      const clean = fsgName.replace(/^"|"$/g, '');
+      const clean = fsgName.replace(/&quot;/g, '"').replace(/^"|"$/g, '');
       return (
         nameToSurvivor[fsgName] ||
         nameToSurvivor[clean] ||
@@ -151,6 +151,7 @@ export async function POST(request: NextRequest) {
     for (const dbSurvivor of dbSurvivors) {
       const epData = epScoreMap[dbSurvivor.name] ||
         epScoreMap[`"${dbSurvivor.name}"`] ||
+        epScoreMap[`&quot;${dbSurvivor.name}&quot;`] ||
         null;
 
       const fsgPoints = epData?.fsgPoints ?? 0;
