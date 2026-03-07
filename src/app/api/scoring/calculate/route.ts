@@ -1,7 +1,12 @@
 // src/app/api/scoring/calculate/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { calculateManagerFantasy, calculatePoolScore, calculateNETTotal, calculateGrandTotal } from '@/lib/scoring';
+import {
+  calculateManagerFantasy,
+  calculatePoolScore,
+  calculateNETTotal,
+  calculateGrandTotal,
+} from '@/lib/scoring';
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,24 +27,27 @@ export async function POST(request: NextRequest) {
       .eq('episode', episode);
 
     if (!episodeScores?.length) {
-      return NextResponse.json({ error: 'No survivor scores found. Pull from FSG first.' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'No survivor scores found. Pull from FSG first.' },
+        { status: 400 }
+      );
     }
 
-    // 2. Get survivor elimination info for voted out bonus
+    // 2. Get survivor elimination info for voted-out bonus
     const { data: survivors } = await supabase
       .from('survivors')
       .select('id, name, is_active, eliminated_episode, elimination_order')
       .eq('season_id', seasonId);
 
-    // Build score lookup — combine FSG points with voted out bonus
-    const survivorEpScores: Record<string, { fsgPoints: number; votedOutBonus: number; isNewlyEliminated: boolean }> = {};
+    // Build score lookup — FSG points + voted-out bonus per survivor
+    const survivorEpScores: Record<
+      string,
+      { fsgPoints: number; votedOutBonus: number; isNewlyEliminated: boolean }
+    > = {};
     for (const s of episodeScores) {
       const survivor = survivors?.find((sv) => sv.id === s.survivor_id);
-
-      // Voted out bonus: if this survivor was eliminated THIS episode,
-      // they earn (24 - place + 1) = elimination_order points
       const isNewlyEliminated = survivor?.eliminated_episode === episode;
-      const votedOutBonus = isNewlyEliminated ? (survivor?.elimination_order || 0) : 0;
+      const votedOutBonus = isNewlyEliminated ? survivor?.elimination_order || 0 : 0;
 
       survivorEpScores[s.survivor_id] = {
         fsgPoints: (s.fsg_points || 0) + (s.manual_adjustment || 0),
@@ -53,7 +61,9 @@ export async function POST(request: NextRequest) {
       .from('managers')
       .select('id, name')
       .eq('season_id', seasonId);
-    if (!managers?.length) return NextResponse.json({ error: 'No managers found' }, { status: 500 });
+    if (!managers?.length) {
+      return NextResponse.json({ error: 'No managers found' }, { status: 500 });
+    }
 
     // 4. Get active team members for each manager
     const { data: teams } = await supabase
@@ -63,7 +73,7 @@ export async function POST(request: NextRequest) {
       .eq('is_active', true);
 
     const managerTeams: Record<string, string[]> = {};
-    for (const t of (teams || [])) {
+    for (const t of teams || []) {
       if (!managerTeams[t.manager_id]) managerTeams[t.manager_id] = [];
       managerTeams[t.manager_id].push(t.survivor_id);
     }
@@ -71,16 +81,16 @@ export async function POST(request: NextRequest) {
     // 5. Get weekly picks
     const { data: weeklyPicks } = await supabase
       .from('weekly_picks')
-      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id')
+      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id')
       .eq('season_id', seasonId)
       .eq('episode', episode);
 
     const picksByManager: Record<string, any> = {};
-    for (const p of (weeklyPicks || [])) {
+    for (const p of weeklyPicks || []) {
       picksByManager[p.manager_id] = p;
     }
 
-    // 6. Check captain privilege — lost if captain was eliminated in ANY previous episode
+    // 6. Check captain privilege — permanently lost if captain eliminated in any prior episode
     const { data: prevManagerScores } = await supabase
       .from('manager_scores')
       .select('manager_id, captain_lost')
@@ -88,7 +98,7 @@ export async function POST(request: NextRequest) {
       .lt('episode', episode);
 
     const captainPrivilegeLost = new Set<string>();
-    for (const ps of (prevManagerScores || [])) {
+    for (const ps of prevManagerScores || []) {
       if (ps.captain_lost) captainPrivilegeLost.add(ps.manager_id);
     }
 
@@ -100,8 +110,13 @@ export async function POST(request: NextRequest) {
       .eq('episode', episode)
       .maybeSingle();
 
-    // 8. First pass — calculate base scores (needed for Assistant Manager chip)
-    const managerBaseScores: Record<string, number> = {};
+    // ----------------------------------------------------------------
+    // 8. FIRST PASS — base fantasy score (chipPlayed: null) for every manager.
+    //    This is used as the "target score" for Chip 1 (Assistant Manager).
+    //    Because chips are excluded here, there is no circular stacking:
+    //    target score = FSG points + voted-out bonus + captain 2x, nothing more.
+    // ----------------------------------------------------------------
+    const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
       const team = managerTeams[mgr.id] || [];
       const picks = picksByManager[mgr.id];
@@ -111,19 +126,38 @@ export async function POST(request: NextRequest) {
         teamSurvivorIds: team,
         captainId: picks?.captain_id || null,
         hasCaptainPrivilege: hasCap,
-        chipPlayed: null,
+        chipPlayed: null,   // intentionally null — no chip effects in first pass
         chipTarget: null,
         survivorEpScores,
       });
-      managerBaseScores[mgr.id] = result.fantasyPoints;
+      managerBaseFantasy[mgr.id] = result.fantasyPoints;
     }
 
-    // 9. Second pass — full calculation with chip effects
+    // ----------------------------------------------------------------
+    // 9. SECOND PASS — full calculation including chip effects.
+    //
+    //    chip_target is stored as a manager NAME (from the picks UI).
+    //    We resolve it to a manager ID before looking up the base score.
+    // ----------------------------------------------------------------
     const resultRows: any[] = [];
+
     for (const mgr of managers) {
       const team = managerTeams[mgr.id] || [];
       const picks = picksByManager[mgr.id];
       const hasCap = !captainPrivilegeLost.has(mgr.id);
+
+      // Resolve chip_target: may be a manager name OR a manager UUID.
+      // Look up by ID first, then fall back to name match.
+      let assistantTargetScore: number | undefined = undefined;
+      if (picks?.chip_played === 1 && picks?.chip_target) {
+        const targetMgr =
+          managers.find((m) => m.id === picks.chip_target) ||
+          managers.find((m) => m.name.toLowerCase() === picks.chip_target.toLowerCase());
+
+        if (targetMgr) {
+          assistantTargetScore = managerBaseFantasy[targetMgr.id];
+        }
+      }
 
       const result = calculateManagerFantasy({
         teamSurvivorIds: team,
@@ -132,12 +166,13 @@ export async function POST(request: NextRequest) {
         chipPlayed: picks?.chip_played || null,
         chipTarget: picks?.chip_target || null,
         survivorEpScores,
-        assistantManagerTargetScore: picks?.chip_target ? managerBaseScores[picks.chip_target] : undefined,
+        assistantManagerTargetScore: assistantTargetScore,
       });
 
-      const netCorrect = netAnswer?.correct_survivor_id && picks?.net_pick_id
-        ? picks.net_pick_id === netAnswer.correct_survivor_id
-        : false;
+      const netCorrect =
+        netAnswer?.correct_survivor_id && picks?.net_pick_id
+          ? picks.net_pick_id === netAnswer.correct_survivor_id
+          : false;
 
       resultRows.push({
         season_id: seasonId,
@@ -156,7 +191,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 10. Upsert manager scores
+    // 10. Upsert manager_scores
     const { error: upsertErr } = await supabase
       .from('manager_scores')
       .upsert(resultRows, { onConflict: 'season_id,manager_id,episode' });
@@ -165,7 +200,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Save failed: ${upsertErr.message}` }, { status: 500 });
     }
 
-        // 10b. Update pool status — increment weeks_survived for safe picks, drown if pick eliminated
+    // ----------------------------------------------------------------
+    // 10b. Record chips played in chips_used (idempotent — skip if already recorded)
+    // ----------------------------------------------------------------
+    for (const row of resultRows) {
+      if (!row.chip_played) continue;
+
+      const picks = picksByManager[row.manager_id];
+      if (!picks?.chip_played) continue;
+
+      // Only insert if not already there (a re-calculate should not duplicate)
+      const { data: existing } = await supabase
+        .from('chips_used')
+        .select('id')
+        .eq('season_id', seasonId)
+        .eq('manager_id', row.manager_id)
+        .eq('chip_id', picks.chip_played)
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from('chips_used').insert({
+          season_id: seasonId,
+          manager_id: row.manager_id,
+          chip_id: picks.chip_played,
+          episode,
+          target: picks.chip_target || null,
+        });
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // 10c. Update pool status — increment weeks_survived or drown
+    // ----------------------------------------------------------------
     const { data: allPoolPicks } = await supabase
       .from('weekly_picks')
       .select('manager_id, pool_pick_id')
@@ -174,15 +240,15 @@ export async function POST(request: NextRequest) {
 
     if (allPoolPicks) {
       for (const pick of allPoolPicks) {
-        if (!pick.pool_pick_id) continue; // No pool pick submitted
+        if (!pick.pool_pick_id) continue;
 
-        // Check if the picked survivor was eliminated this episode or earlier
         const pickedSurvivor = survivors?.find((s) => s.id === pick.pool_pick_id);
-        const pickEliminated = pickedSurvivor && !pickedSurvivor.is_active && 
-          pickedSurvivor.eliminated_episode !== null && 
+        const pickEliminated =
+          pickedSurvivor &&
+          !pickedSurvivor.is_active &&
+          pickedSurvivor.eliminated_episode !== null &&
           pickedSurvivor.eliminated_episode <= episode;
 
-        // Get current pool status
         const { data: currentPool } = await supabase
           .from('pool_status')
           .select('*')
@@ -190,35 +256,31 @@ export async function POST(request: NextRequest) {
           .eq('manager_id', pick.manager_id)
           .maybeSingle();
 
-        // Skip if already drowned/burnt/finished
         if (currentPool && currentPool.status !== 'active') continue;
 
         if (pickEliminated) {
-          // Pick was eliminated — manager is drowned
-          await supabase
-            .from('pool_status')
-            .upsert({
+          await supabase.from('pool_status').upsert(
+            {
               season_id: seasonId,
               manager_id: pick.manager_id,
               status: 'drowned',
               drowned_episode: episode,
               weeks_survived: currentPool?.weeks_survived || 0,
-            }, { onConflict: 'season_id,manager_id' });
+            },
+            { onConflict: 'season_id,manager_id' }
+          );
         } else {
-          // Pick survived — increment weeks
-          await supabase
-            .from('pool_status')
-            .upsert({
+          await supabase.from('pool_status').upsert(
+            {
               season_id: seasonId,
               manager_id: pick.manager_id,
               status: 'active',
               weeks_survived: (currentPool?.weeks_survived || 0) + 1,
-            }, { onConflict: 'season_id,manager_id' });
+            },
+            { onConflict: 'season_id,manager_id' }
+          );
         }
       }
-
-      // Also handle managers with no pool pick (burnt — no picks remaining)
-      // For now, skip — burnt status should be set manually via overrides
     }
 
     // 11. Recalculate manager_totals
@@ -229,11 +291,13 @@ export async function POST(request: NextRequest) {
         .eq('season_id', seasonId)
         .eq('manager_id', mgr.id);
 
-      const fantasyTotal = (allEpScores || []).reduce((s, r) => s + (r.fantasy_points || 0), 0);
-      const netCorrectCount = (allEpScores || []).filter(r => r.net_correct).length;
+      const fantasyTotal = (allEpScores || []).reduce(
+        (s, r) => s + (r.fantasy_points || 0),
+        0
+      );
+      const netCorrectCount = (allEpScores || []).filter((r) => r.net_correct).length;
       const netTotal = calculateNETTotal(netCorrectCount);
 
-      // Pool score
       const { data: poolStatus } = await supabase
         .from('pool_status')
         .select('weeks_survived')
@@ -241,14 +305,14 @@ export async function POST(request: NextRequest) {
         .eq('manager_id', mgr.id)
         .maybeSingle();
 
-      // Top fantasy score across all managers
+      // Top fantasy score across all managers (for pool formula)
       const { data: allTotals } = await supabase
         .from('manager_scores')
         .select('manager_id, fantasy_points')
         .eq('season_id', seasonId);
 
       const managerSums: Record<string, number> = {};
-      for (const t of (allTotals || [])) {
+      for (const t of allTotals || []) {
         managerSums[t.manager_id] = (managerSums[t.manager_id] || 0) + (t.fantasy_points || 0);
       }
       const topFantasy = Math.max(...Object.values(managerSums), 0);
@@ -256,19 +320,22 @@ export async function POST(request: NextRequest) {
       const poolScore = calculatePoolScore(poolStatus?.weeks_survived || 0, episode, topFantasy);
       const grandTotal = calculateGrandTotal(fantasyTotal, poolScore, 0, netTotal);
 
-      await supabase.from('manager_totals').upsert({
-        season_id: seasonId,
-        manager_id: mgr.id,
-        fantasy_total: fantasyTotal,
-        pool_score: poolScore,
-        quinfecta_score: 0,
-        net_total: netTotal,
-        grand_total: grandTotal,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'season_id,manager_id' });
+      await supabase.from('manager_totals').upsert(
+        {
+          season_id: seasonId,
+          manager_id: mgr.id,
+          fantasy_total: fantasyTotal,
+          pool_score: poolScore,
+          quinfecta_score: 0,
+          net_total: netTotal,
+          grand_total: grandTotal,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'season_id,manager_id' }
+      );
     }
 
-    // 12. Rank
+    // 12. Rank managers by grand_total
     const { data: ranked } = await supabase
       .from('manager_totals')
       .select('manager_id, grand_total')
@@ -277,7 +344,8 @@ export async function POST(request: NextRequest) {
 
     if (ranked) {
       for (let i = 0; i < ranked.length; i++) {
-        await supabase.from('manager_totals')
+        await supabase
+          .from('manager_totals')
           .update({ rank: i + 1 })
           .eq('season_id', seasonId)
           .eq('manager_id', ranked[i].manager_id);
@@ -287,7 +355,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       episode,
-      results: resultRows.map(r => ({
+      results: resultRows.map((r) => ({
         managerId: r.manager_id,
         fantasyPoints: r.fantasy_points,
         captainBonus: r.captain_bonus,
@@ -297,9 +365,11 @@ export async function POST(request: NextRequest) {
         netCorrect: r.net_correct,
       })),
     });
-
   } catch (error: any) {
     console.error('Calculate error:', error);
-    return NextResponse.json({ error: `Calculation failed: ${error.message}` }, { status: 500 });
+    return NextResponse.json(
+      { error: `Calculation failed: ${error.message}` },
+      { status: 500 }
+    );
   }
 }
