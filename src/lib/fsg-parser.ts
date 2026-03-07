@@ -221,7 +221,7 @@ export function parseEpisodeRecap(html: string): FSGEpisodeData[] {
         const nameRegex = /<span\s+class="survivorname"[^>]*>([^<]+)<\/span>/gi;
         let nameMatch;
         while ((nameMatch = nameRegex.exec(ddHtml)) !== null) {
-          names.push(nameMatch[1].trim());
+          names.push(nameMatch[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim());
         }
 
         // If no survivorname spans, try plain <a> links to /survivors/
