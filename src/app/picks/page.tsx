@@ -57,7 +57,7 @@ const SurvivorOption = ({ s, selected, onClick, disabled }: { s: Survivor; selec
       <div style={{ fontSize: '13px', fontWeight: 600, color: selected ? '#fff' : 'rgba(255,255,255,0.7)' }}>{s.name}</div>
       <div style={{ fontSize: '10px', fontWeight: 700, color: TC[s.tribe], letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>
     </div>
-    {selected && <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: TC[s.tribe], display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#fff', fontSize: '11px', fontWeight: 800 }}>&#x2713;</span></div>}
+    {selected && <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: TC[s.tribe], display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#fff', fontSize: '11px', fontWeight: 800 }}>✓</span></div>}
   </div>
 );
 
@@ -176,11 +176,11 @@ function PicksContent() {
 
   const deadlineStr = useMemo(() => {
     const now = new Date(); const d = (3 - now.getDay() + 7) % 7; const w = new Date(now); w.setDate(now.getDate() + (d === 0 ? 0 : d));
-    return `${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][w.getDay()]}, ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][w.getMonth()]} ${w.getDate()} \u00B7 7:00 PM CT`;
+    return `${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][w.getDay()]}, ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][w.getMonth()]} ${w.getDate()} · 7:00 PM CT`;
   }, []);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-white/30 text-sm tracking-wider uppercase">Loading picks...</div></div>;
-  if (!season) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-center"><div className="text-3xl mb-3">&#x1F3DD;</div><div className="text-white/40 text-sm">No active season found</div></div></div>;
+  if (!season) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-center"><div className="text-3xl mb-3">🏝</div><div className="text-white/40 text-sm">No active season found</div></div></div>;
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8e8', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
@@ -194,15 +194,15 @@ function PicksContent() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
             <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>Due: {deadlineStr}</span>
             <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: isPastDeadline ? 'rgba(255,80,80,0.1)' : 'rgba(255,215,0,0.08)', color: isPastDeadline ? '#FF5050' : '#FFD54F' }}>
-              {isPastDeadline ? '&#x1F512; LOCKED' : `&#x23F1; ${timeLeft}`}
+              {isPastDeadline ? '🔒 LOCKED' : `⏱ ${timeLeft}`}
             </span>
           </div>
         </div>
 
         {saveMessage && <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '14px', fontSize: '13px', background: saveMessage.startsWith('Error') ? 'rgba(255,80,80,0.08)' : 'rgba(26,188,156,0.08)', border: saveMessage.startsWith('Error') ? '1px solid rgba(255,80,80,0.2)' : '1px solid rgba(26,188,156,0.2)', color: saveMessage.startsWith('Error') ? '#FF5050' : '#1ABC9C' }}>{saveMessage}</div>}
-        {existingPick && !saveMessage && <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '12px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', color: 'rgba(26,188,156,0.7)' }}>&#x2705; Picks submitted &#x2014; you can update until the deadline</div>}
+        {existingPick && !saveMessage && <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '12px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', color: 'rgba(26,188,156,0.7)' }}>✅ Picks submitted — you can update until the deadline</div>}
 
-        <Section title="Captain Designation" icon="&#x1F451;" badge="REQUIRED" badgeColor="#FFD54F">
+        <Section title="Captain Designation" icon="👑" badge="REQUIRED" badgeColor="#FFD54F">
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {activeTeam.length === 0 ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center' }}>No active survivors on your team</div> :
@@ -210,7 +210,7 @@ function PicksContent() {
           </div>
         </Section>
 
-        <Section title="Survivor Pool" icon="&#x1F30A;" badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : 'BURNT'} badgeColor={poolStatus === 'active' ? '#1ABC9C' : poolStatus === 'drowned' ? '#FF6B35' : '#FF5050'}>
+        <Section title="Survivor Pool" icon="🌊" badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : 'BURNT'} badgeColor={poolStatus === 'active' ? '#1ABC9C' : poolStatus === 'drowned' ? '#FF6B35' : '#FF5050'}>
           {poolStatus === 'active' ? (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Pick one survivor you think <b style={{ color: 'rgba(255,255,255,0.5)' }}>will NOT be eliminated</b>. No reusing previous picks.</p>
             <TribeFilter value={poolFilter} onChange={setPoolFilter} tribes={tribes} />
@@ -223,10 +223,10 @@ function PicksContent() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
               {(poolFilter === 'All' ? activeSurvivors : activeSurvivors.filter(s => s.tribe === poolFilter)).map(s => <SurvivorOption key={s.id} s={s} selected={backdoorPick === s.id} onClick={() => !isLocked && setBackdoorPick(s.id)} disabled={isLocked} />)}
             </div>
-          </>) : <p style={{ fontSize: '12px', color: 'rgba(255,80,80,0.5)', margin: 0 }}>You have been <b>Burnt</b> &#x2014; no more pool picks this season.</p>}
+          </>) : <p style={{ fontSize: '12px', color: 'rgba(255,80,80,0.5)', margin: 0 }}>You have been <b>Burnt</b> — no more pool picks this season.</p>}
         </Section>
 
-        <Section title="Name Episode Title (NET)" icon="&#x1F4AC;" badge="REQUIRED" badgeColor="#1ABC9C">
+        <Section title="Name Episode Title (NET)" icon="💬" badge="REQUIRED" badgeColor="#1ABC9C">
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Which survivor says the <b style={{ color: 'rgba(255,255,255,0.5)' }}>episode title quote</b>? Worth <b style={{ color: '#1ABC9C' }}>3 points</b>.</p>
           <TribeFilter value={netFilter} onChange={setNetFilter} tribes={tribes} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
@@ -234,7 +234,7 @@ function PicksContent() {
           </div>
         </Section>
 
-        <Section title="Game Chips" icon="&#x1F3B0;" badge={activeChipWindow ? 'AVAILABLE' : 'NO CHIP THIS WEEK'} badgeColor={activeChipWindow ? '#FFD54F' : 'rgba(255,255,255,0.25)'}>
+        <Section title="Game Chips" icon="🎰" badge={activeChipWindow ? 'AVAILABLE' : 'NO CHIP THIS WEEK'} badgeColor={activeChipWindow ? '#FFD54F' : 'rgba(255,255,255,0.25)'}>
           {activeChipWindow ? (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 14px', lineHeight: 1.5 }}>Optional chip play. <b style={{ color: 'rgba(255,255,255,0.5)' }}>Cannot be undone</b> after submission.</p>
             {availableChips.map(c => (
@@ -243,13 +243,13 @@ function PicksContent() {
                 <span style={{ fontSize: '24px' }}>{c.icon}</span>
                 <div style={{ flex: 1 }}><div style={{ fontSize: '14px', fontWeight: 700, color: chipPlay === c.id ? '#FFD54F' : '#fff' }}>{c.name}</div><div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{c.desc}</div></div>
                 <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: chipPlay === c.id ? '2px solid #FFD54F' : '2px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: chipPlay === c.id ? '#FFD54F' : 'transparent' }}>
-                  {chipPlay === c.id && <span style={{ fontSize: '12px', color: '#0a0a0f', fontWeight: 800 }}>&#x2713;</span>}
+                  {chipPlay === c.id && <span style={{ fontSize: '12px', color: '#0a0a0f', fontWeight: 800 }}>✓</span>}
                 </div>
               </div>
             ))}
             {chipPlay === 1 && (
               <div style={{ background: 'rgba(255,215,0,0.04)', border: '1px solid rgba(255,215,0,0.15)', borderRadius: '10px', padding: '14px', marginTop: '8px' }}>
-                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', margin: '0 0 10px' }}>Select which manager&#x27;s team to copy:</p>
+                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', margin: '0 0 10px' }}>Select which manager&apos;s team to copy:</p>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: '6px' }}>
                   {managers.filter(m => m.id !== manager?.id).map(m => (
                     <div key={m.id} onClick={() => !isLocked && setChipTarget(m.name)} style={{ padding: '10px', textAlign: 'center', borderRadius: '8px', cursor: isLocked ? 'default' : 'pointer', background: chipTarget === m.name ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.02)', border: chipTarget === m.name ? '1px solid rgba(255,215,0,0.3)' : '1px solid rgba(255,255,255,0.04)' }}>
@@ -272,13 +272,13 @@ function PicksContent() {
         <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(transparent,#0a0a0f 20%)', padding: '20px 0 10px', marginTop: '8px' }}>
           <button onClick={() => { if (picksComplete && !isLocked) savePicks(); }} disabled={!picksComplete || isLocked || saving}
             style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', cursor: picksComplete && !isLocked && !saving ? 'pointer' : 'default', fontWeight: 800, fontSize: '15px', letterSpacing: '1.5px', background: isLocked ? 'rgba(255,80,80,0.08)' : picksComplete ? 'linear-gradient(135deg,#FF6B35,#FF8F00)' : 'rgba(255,255,255,0.04)', color: isLocked ? 'rgba(255,80,80,0.5)' : picksComplete ? '#fff' : 'rgba(255,255,255,0.15)', boxShadow: picksComplete && !isLocked ? '0 4px 20px rgba(255,107,53,0.3)' : 'none', opacity: saving ? 0.6 : 1 }}>
-            {isLocked ? '&#x1F512; PICKS LOCKED' : saving ? 'Saving...' : existingPick ? '&#x1F525; UPDATE PICKS' : picksComplete ? '&#x1F525; SUBMIT PICKS' : 'Complete all required picks to submit'}
+            {isLocked ? '🔒 PICKS LOCKED' : saving ? 'Saving...' : existingPick ? '🔥 UPDATE PICKS' : picksComplete ? '🔥 SUBMIT PICKS' : 'Complete all required picks to submit'}
           </button>
           {!picksComplete && !isLocked && (
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '8px' }}>
-              {!captain && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>&#x26A0; Captain</span>}
-              {poolStatus === 'active' && !poolPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>&#x26A0; Pool</span>}
-              {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>&#x26A0; NET</span>}
+              {!captain && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Captain</span>}
+              {poolStatus === 'active' && !poolPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Pool</span>}
+              {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ NET</span>}
             </div>
           )}
         </div>
