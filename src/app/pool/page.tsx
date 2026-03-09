@@ -170,7 +170,10 @@ export default function PoolBoardPage() {
       return {
         ...m,
         status: ps?.status || 'active',
-        weeksSafe: ps?.weeks_survived || 0,
+        // Derive from actual picks data rather than DB weeks_survived,
+        // which can get out of sync if calculate is re-run on future episodes.
+        // Count only 'safe' picks from completed episodes (already filtered in epPicks).
+        weeksSafe: epPicks.filter(p => p.type === 'safe').length,
         hasIdol: ps?.has_immunity_idol || false,
         drownedEp: ps?.drowned_episode || null,
         picks: epPicks,
@@ -192,13 +195,17 @@ export default function PoolBoardPage() {
   // Count how many managers have ever picked each survivor across all episodes
   const survivorPickCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    weeklyPicks.forEach(pick => {
-      if (pick.pool_pick_id) {
-        counts[pick.pool_pick_id] = (counts[pick.pool_pick_id] || 0) + 1;
-      }
-    });
+    // Only count picks from completed episodes (< currentEpisode).
+    // Excludes the current in-progress episode until picks are locked.
+    weeklyPicks
+      .filter(pick => pick.episode < currentEpisode)
+      .forEach(pick => {
+        if (pick.pool_pick_id) {
+          counts[pick.pool_pick_id] = (counts[pick.pool_pick_id] || 0) + 1;
+        }
+      });
     return counts;
-  }, [weeklyPicks]);
+  }, [weeklyPicks, currentEpisode]);
 
   const maxPickCount = useMemo(() => {
     const vals = Object.values(survivorPickCounts);
