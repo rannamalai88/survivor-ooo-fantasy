@@ -12,6 +12,7 @@ export interface Survivor {
   tribe: string;
   photo_url: string;
   is_active: boolean;
+  eliminated_episode: number | null;
 }
 
 export interface Manager {
