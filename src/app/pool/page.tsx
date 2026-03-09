@@ -37,6 +37,28 @@ interface SurvivorInfo {
 }
 
 // ============================================================
+// Helpers
+// ============================================================
+
+/** Returns true if it is currently past Wednesday 7pm CT */
+function isPicksLocked(): boolean {
+  const now = new Date();
+  // Wednesday = day 3. CT is UTC-5 (CST) or UTC-6 (CDT).
+  // Simpler: convert to CT by offsetting. CDT = UTC-5, CST = UTC-6.
+  // We'll use UTC-5 as a conservative approximation (picks lock slightly early in CST).
+  const CT_OFFSET_MS = 5 * 60 * 60 * 1000; // UTC-5
+  const ctNow = new Date(now.getTime() - CT_OFFSET_MS);
+  const dayOfWeek = ctNow.getUTCDay(); // 0=Sun … 3=Wed … 6=Sat
+  const hour = ctNow.getUTCHours();
+  const minute = ctNow.getUTCMinutes();
+
+  // Locked if: day > Wednesday, OR day === Wednesday AND time >= 19:00
+  if (dayOfWeek > 3) return true;
+  if (dayOfWeek === 3 && (hour > 19 || (hour === 19 && minute >= 0))) return true;
+  return false;
+}
+
+// ============================================================
 // Component
 // ============================================================
 export default function PoolBoardPage() {
@@ -47,8 +69,15 @@ export default function PoolBoardPage() {
   const [survivors, setSurvivors] = useState<SurvivorInfo[]>([]);
   const [currentEpisode, setCurrentEpisode] = useState(2);
   const [totalEpisodes, setTotalEpisodes] = useState(13);
+  const [picksLocked, setPicksLocked] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    // Check lock status immediately and re-check every minute
+    setPicksLocked(isPicksLocked());
+    const iv = setInterval(() => setPicksLocked(isPicksLocked()), 60_000);
+    return () => clearInterval(iv);
+  }, []);
 
   async function loadData() {
     try {
@@ -75,10 +104,6 @@ export default function PoolBoardPage() {
   }
 
   // ---- Computed ----
-  const episodes = useMemo(() => {
-    const eps = [...new Set(weeklyPicks.map(p => p.episode))].sort((a, b) => a - b);
-    return eps.length > 0 ? eps : [2]; // at least show ep 2
-  }, [weeklyPicks]);
 
   const survivorMap = useMemo(() => {
     const map = new Map<string, SurvivorInfo>();
@@ -86,7 +111,7 @@ export default function PoolBoardPage() {
     return map;
   }, [survivors]);
 
-  // Eliminated survivor per episode (for checking backdoor correctness)
+  // Eliminated survivor per episode
   const eliminatedByEp = useMemo(() => {
     const map = new Map<number, string>();
     survivors.filter(s => s.eliminated_episode).forEach(s => {
@@ -94,6 +119,19 @@ export default function PoolBoardPage() {
     });
     return map;
   }, [survivors]);
+
+  // Episodes to show:
+  // - Always exclude E1
+  // - Exclude current episode until picks are locked
+  const episodes = useMemo(() => {
+    const allEps = [...new Set(weeklyPicks.map(p => p.episode))].sort((a, b) => a - b);
+    const base = allEps.length > 0 ? allEps : [2];
+    return base.filter(ep => {
+      if (ep === 1) return false;                          // always hide E1
+      if (ep === currentEpisode && !picksLocked) return false; // hide current until locked
+      return true;
+    });
+  }, [weeklyPicks, currentEpisode, picksLocked]);
 
   const poolData = useMemo(() => {
     return managers.map(m => {
@@ -106,7 +144,6 @@ export default function PoolBoardPage() {
 
         if (pick.pool_pick_id) {
           const survivor = survivorMap.get(pick.pool_pick_id);
-          // Check if this pick was safe (survivor wasn't eliminated this episode)
           const wasEliminated = survivor && survivor.eliminated_episode === ep;
           return {
             episode: ep,
@@ -117,7 +154,6 @@ export default function PoolBoardPage() {
 
         if (pick.pool_backdoor_id) {
           const survivor = survivorMap.get(pick.pool_backdoor_id);
-          // Backdoor is correct if they guessed the person who was actually eliminated
           const eliminatedId = eliminatedByEp.get(ep);
           const correct = eliminatedId === pick.pool_backdoor_id;
           return {
@@ -134,7 +170,7 @@ export default function PoolBoardPage() {
       return {
         ...m,
         status: ps?.status || 'active',
-        weeksInPool: ps?.weeks_survived || 0,
+        weeksSafe: ps?.weeks_survived || 0,
         hasIdol: ps?.has_immunity_idol || false,
         drownedEp: ps?.drowned_episode || null,
         picks: epPicks,
@@ -152,6 +188,33 @@ export default function PoolBoardPage() {
     return counts;
   }, [poolData]);
 
+  // ---- Survivor pick frequency heatmap ----
+  // Count how many managers have ever picked each survivor across all episodes
+  const survivorPickCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    weeklyPicks.forEach(pick => {
+      if (pick.pool_pick_id) {
+        counts[pick.pool_pick_id] = (counts[pick.pool_pick_id] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [weeklyPicks]);
+
+  const maxPickCount = useMemo(() => {
+    const vals = Object.values(survivorPickCounts);
+    return vals.length > 0 ? Math.max(...vals) : 1;
+  }, [survivorPickCounts]);
+
+  // Sort survivors: most-picked first, then alphabetical
+  const sortedSurvivors = useMemo(() => {
+    return [...survivors].sort((a, b) => {
+      const ca = survivorPickCounts[a.id] || 0;
+      const cb = survivorPickCounts[b.id] || 0;
+      if (cb !== ca) return cb - ca;
+      return a.name.localeCompare(b.name);
+    });
+  }, [survivors, survivorPickCounts]);
+
   // ---- Render ----
   if (loading) {
     return (
@@ -163,11 +226,13 @@ export default function PoolBoardPage() {
   }
 
   const STATUS_CFG: Record<string, { color: string; bg: string; label: string }> = {
-    active: { color: '#1ABC9C', bg: 'rgba(26,188,156,0.1)', label: 'Active' },
-    finished: { color: '#FFD54F', bg: 'rgba(255,215,0,0.1)', label: 'Finished!' },
-    drowned: { color: '#E74C3C', bg: 'rgba(231,76,60,0.1)', label: 'Drowned' },
-    burnt: { color: '#95a5a6', bg: 'rgba(149,165,166,0.1)', label: 'Burnt' },
+    active:   { color: '#1ABC9C', bg: 'rgba(26,188,156,0.1)',  label: 'Active'    },
+    finished: { color: '#FFD54F', bg: 'rgba(255,215,0,0.1)',   label: 'Finished!' },
+    drowned:  { color: '#E74C3C', bg: 'rgba(231,76,60,0.1)',   label: 'Drowned'   },
+    burnt:    { color: '#95a5a6', bg: 'rgba(149,165,166,0.1)', label: 'Burnt'     },
   };
+
+  const totalPoolWeeks = totalEpisodes - 1;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -175,8 +240,13 @@ export default function PoolBoardPage() {
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <div>
           <h1 className="text-xl font-extrabold text-white tracking-wider">🌊 Survivor Pool Board</h1>
-          <p className="text-white/25 text-xs mt-1">Season 50 · Through Episode {currentEpisode}</p>
+          <p className="text-white/25 text-xs mt-1">Season 50 · Through Episode {currentEpisode - 1}</p>
         </div>
+        {!picksLocked && (
+          <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
+            ⏱ E{currentEpisode} picks hidden until Wed 7pm CT
+          </span>
+        )}
       </div>
 
       {/* Status Summary */}
@@ -205,7 +275,7 @@ export default function PoolBoardPage() {
               {episodes.map(ep => (
                 <th key={ep} className="text-center p-2 text-white/25 font-bold text-[9px] tracking-wider min-w-[72px]">E{ep}</th>
               ))}
-              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-16">WEEKS</th>
+              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">WEEKS SAFE</th>
             </tr>
           </thead>
           <tbody>
@@ -302,10 +372,10 @@ export default function PoolBoardPage() {
 
                     return <td key={pick.episode} className="p-1.5 text-center">—</td>;
                   })}
-                  {/* Weeks survived */}
+                  {/* Weeks Safe */}
                   <td className="p-2.5 text-center">
-                    <span className="font-bold text-white">{m.weeksInPool}</span>
-                    <span className="text-white/20">/{totalEpisodes - 1}</span>
+                    <span className="font-bold text-white">{m.weeksSafe}</span>
+                    <span className="text-white/20">/{totalPoolWeeks}</span>
                   </td>
                 </tr>
               );
@@ -316,25 +386,148 @@ export default function PoolBoardPage() {
 
       {/* Legend */}
       <div className="mt-4 flex items-center gap-4 flex-wrap text-[10px] text-white/25">
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> ✓ Safe pick
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> 💀 Drowned (pick eliminated)
-        </span>
-        <span className="flex items-center gap-1">
-          🚪 Backdoor attempt
-        </span>
-        <span className="flex items-center gap-1">
-          🛡️ Immunity Idol holder
-        </span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> ✓ Safe pick</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> 💀 Drowned (pick eliminated)</span>
+        <span>🚪 Backdoor attempt</span>
+        <span>🛡️ Immunity Idol holder</span>
       </div>
 
       {/* Pool scoring explanation */}
       <div className="mt-3 bg-white/[0.02] border border-white/[0.04] rounded-lg p-3 text-[11px] text-white/25">
         <span className="font-bold text-white/40">Pool Score Formula:</span>{' '}
-        (Weeks Survived / {totalEpisodes - 1}) × (25% of Top Fantasy Score)
+        (Weeks Safe / {totalPoolWeeks}) × (25% of Top Fantasy Score)
+      </div>
+
+      {/* ================================================================
+          Survivor Pick Frequency Heatmap
+          ================================================================ */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h2 className="text-sm font-extrabold text-white tracking-wider">🔥 Survivor Pick Popularity</h2>
+            <p className="text-[10px] text-white/25 mt-0.5">
+              How many managers have used each survivor as a pool pick (out of {managers.length} possible)
+            </p>
+          </div>
+          {/* Heatmap legend */}
+          <div className="flex items-center gap-1 text-[9px] text-white/25">
+            <span>Low</span>
+            {[0.1, 0.3, 0.5, 0.7, 0.9].map(t => (
+              <div
+                key={t}
+                className="w-4 h-4 rounded-sm"
+                style={{ background: heatColor(t) }}
+              />
+            ))}
+            <span>High</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+          {sortedSurvivors.map(s => {
+            const count = survivorPickCounts[s.id] || 0;
+            const ratio = managers.length > 0 ? count / managers.length : 0;
+            const tColor = TRIBE_COLORS[s.tribe] || '#888';
+            const heat = heatColor(ratio);
+
+            return (
+              <div
+                key={s.id}
+                className="relative rounded-lg p-3 flex items-center gap-2.5"
+                style={{
+                  background: count > 0
+                    ? `linear-gradient(135deg, ${heat}18, ${heat}08)`
+                    : 'rgba(255,255,255,0.02)',
+                  border: count > 0
+                    ? `1px solid ${heat}35`
+                    : '1px solid rgba(255,255,255,0.04)',
+                  opacity: s.is_active ? 1 : 0.55,
+                }}
+              >
+                {/* Tribe color dot */}
+                <div
+                  className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{ background: tColor }}
+                />
+
+                {/* Name + status */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span
+                      className="text-[12px] font-semibold truncate"
+                      style={{ color: s.is_active ? '#fff' : 'rgba(255,255,255,0.35)' }}
+                    >
+                      {s.name}
+                    </span>
+                    {!s.is_active && (
+                      <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 flex-shrink-0">
+                        OUT {s.eliminated_episode ? `E${s.eliminated_episode}` : ''}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[9px] font-bold mt-0.5" style={{ color: tColor }}>
+                    {s.tribe.toUpperCase()}
+                  </div>
+                </div>
+
+                {/* Pick count */}
+                <div className="text-right flex-shrink-0">
+                  <div
+                    className="text-base font-extrabold leading-none"
+                    style={{ color: count > 0 ? heat : 'rgba(255,255,255,0.12)' }}
+                  >
+                    {count}
+                  </div>
+                  <div className="text-[8px] text-white/20 mt-0.5">/{managers.length}</div>
+                </div>
+
+                {/* Heat bar along the bottom */}
+                {count > 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-lg" style={{ background: heat, opacity: 0.5 }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
+}
+
+// Interpolate from cool blue → green → yellow → orange → red based on 0–1 ratio
+function heatColor(ratio: number): string {
+  if (ratio <= 0) return '#334155';
+  if (ratio < 0.25) {
+    // blue → teal
+    const t = ratio / 0.25;
+    return lerpColor('#3B82F6', '#1ABC9C', t);
+  }
+  if (ratio < 0.5) {
+    // teal → yellow
+    const t = (ratio - 0.25) / 0.25;
+    return lerpColor('#1ABC9C', '#FFD54F', t);
+  }
+  if (ratio < 0.75) {
+    // yellow → orange
+    const t = (ratio - 0.5) / 0.25;
+    return lerpColor('#FFD54F', '#FF6B35', t);
+  }
+  // orange → red
+  const t = (ratio - 0.75) / 0.25;
+  return lerpColor('#FF6B35', '#E74C3C', t);
+}
+
+function lerpColor(a: string, b: string, t: number): string {
+  const ah = a.replace('#', '');
+  const bh = b.replace('#', '');
+  const ar = parseInt(ah.slice(0, 2), 16);
+  const ag = parseInt(ah.slice(2, 4), 16);
+  const ab = parseInt(ah.slice(4, 6), 16);
+  const br = parseInt(bh.slice(0, 2), 16);
+  const bg = parseInt(bh.slice(2, 4), 16);
+  const bb = parseInt(bh.slice(4, 6), 16);
+  const r = Math.round(ar + (br - ar) * t).toString(16).padStart(2, '0');
+  const g = Math.round(ag + (bg - ag) * t).toString(16).padStart(2, '0');
+  const bl = Math.round(ab + (bb - ab) * t).toString(16).padStart(2, '0');
+  return `#${r}${g}${bl}`;
 }
