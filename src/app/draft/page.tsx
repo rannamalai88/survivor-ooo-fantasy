@@ -80,28 +80,22 @@ export default function DraftPage() {
   const [pickError, setPickError] = useState<string | null>(null);
   const [isPicking, setIsPicking] = useState(false);
 
-  // Commissioner mode — for now, always enabled (auth comes later)
   const isCommissioner = true;
 
   const { survivors, managers, picks, loading, error, currentSlot, currentPickIndex,
     isDraftComplete, retirementCount, isSurvivorAvailable, survivorById,
     managerByIndex, makePick, undoLastPick, picksForManager } = draft;
 
-  // Filtered survivors
   const filteredSurvivors = useMemo(() => {
     if (tribeFilter === 'All') return survivors;
     return survivors.filter((s) => s.tribe === tribeFilter);
   }, [survivors, tribeFilter]);
 
-  // Currently on the clock
   const onTheClockManager = currentSlot ? managerByIndex(currentSlot.manager_index) : null;
   const pickerManager = currentSlot ? managerByIndex(currentSlot.picker_index) : null;
   const isPartnerRound = currentSlot?.round === 5;
-
-  // Selected survivor for confirmation
   const selectedSurvivor = selectedSurvivorId ? survivorById(selectedSurvivorId) : null;
 
-  // Handle pick
   const handlePick = async () => {
     if (!selectedSurvivorId || isPicking) return;
     setIsPicking(true);
@@ -116,7 +110,6 @@ export default function DraftPage() {
     setIsPicking(false);
   };
 
-  // Handle undo
   const handleUndo = async () => {
     const result = await undoLastPick();
     if (!result.success) {
@@ -125,7 +118,6 @@ export default function DraftPage() {
     setShowUndo(false);
   };
 
-  // Get picks grouped by manager
   const getManagerPick = (managerId: string, round: number): DraftPick | undefined => {
     return picks.find((p) => p.manager_id === managerId && p.round === round);
   };
@@ -201,7 +193,6 @@ export default function DraftPage() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px',
       }}>
         <div style={{ display: 'flex', gap: '32px', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Round */}
           <div>
             <div style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '2px', textTransform: 'uppercase' as const }}>Round</div>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '2px' }}>
@@ -217,7 +208,6 @@ export default function DraftPage() {
             </div>
           </div>
 
-          {/* On the Clock */}
           {!isDraftComplete && pickerManager && (
             <div>
               <div style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '2px', textTransform: 'uppercase' as const }}>On the Clock</div>
@@ -230,7 +220,6 @@ export default function DraftPage() {
             </div>
           )}
 
-          {/* Pick counter */}
           <div>
             <div style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.3)', letterSpacing: '2px', textTransform: 'uppercase' as const }}>Pick</div>
             <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '2px' }}>
@@ -240,7 +229,6 @@ export default function DraftPage() {
           </div>
         </div>
 
-        {/* Undo button (commissioner only) */}
         {isCommissioner && picks.length > 0 && !showUndo && (
           <button
             onClick={() => setShowUndo(true)}
@@ -313,7 +301,6 @@ export default function DraftPage() {
                 <h2 style={{ margin: 0, fontSize: '13px', fontWeight: 700, letterSpacing: '2px', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' as const }}>
                   Survivors
                 </h2>
-                {/* Tribe filter */}
                 <div style={{ display: 'flex', gap: '3px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px', padding: '2px' }}>
                   {['All', 'Vatu', 'Kalo', 'Cila'].map((t) => (
                     <button
@@ -332,7 +319,6 @@ export default function DraftPage() {
                 </div>
               </div>
 
-              {/* Survivor cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: '6px' }}>
                 {filteredSurvivors.map((s) => {
                   const available = isSurvivorAvailable(s.id);
@@ -368,7 +354,6 @@ export default function DraftPage() {
                       <div style={{ fontSize: '9px', fontWeight: 700, color: TC[s.tribe], letterSpacing: '1px', marginTop: '1px' }}>
                         {s.tribe.toUpperCase()}
                       </div>
-                      {/* Retirement counter badge */}
                       {rd >= 2 && rd <= 4 && count > 0 && s.is_active && (
                         <div style={{
                           position: 'absolute', top: '4px', right: '4px',
@@ -379,7 +364,6 @@ export default function DraftPage() {
                           {retired ? 'OUT' : `${count}/2`}
                         </div>
                       )}
-                      {/* Eliminated badge */}
                       {!s.is_active && (
                         <div style={{
                           position: 'absolute', top: '4px', right: '4px',
@@ -399,7 +383,6 @@ export default function DraftPage() {
             {/* ─── Sidebar ────────────────────────────── */}
             <div style={{ flex: '0 0 260px', minWidth: '240px' }}>
 
-              {/* Confirm Panel */}
               {showConfirm && selectedSurvivor && !isDraftComplete && isCommissioner && currentSlot && (() => {
                 const s = selectedSurvivor;
                 return (
@@ -473,6 +456,7 @@ export default function DraftPage() {
                     const manager = managerByIndex(slot?.manager_index ?? 0);
                     const picker = managerByIndex(slot?.picker_index ?? 0);
                     if (!s || !slot) return null;
+                    const isElim = !s.is_active;
 
                     return (
                       <div
@@ -483,6 +467,7 @@ export default function DraftPage() {
                           background: ri === 0 ? 'rgba(255,107,53,0.06)' : 'transparent',
                           borderRadius: '8px', marginBottom: '1px',
                           borderLeft: ri === 0 ? '2px solid #FF6B35' : '2px solid transparent',
+                          opacity: isElim ? 0.55 : 1,
                         }}
                       >
                         <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.2)', minWidth: '18px', fontWeight: 700 }}>
@@ -490,7 +475,14 @@ export default function DraftPage() {
                         </span>
                         <SurvivorAvatar survivor={s} size={24} />
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: '12px', fontWeight: 600 }}>{s.name}</div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: isElim ? 'rgba(255,255,255,0.35)' : '#e8e8e8', textDecoration: isElim ? 'line-through' : 'none', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                            {s.name}
+                            {isElim && (
+                              <span style={{ fontSize: '8px', fontWeight: 800, color: '#ff6b6b', background: 'rgba(255,80,80,0.15)', padding: '1px 4px', borderRadius: '3px', textDecoration: 'none' }}>
+                                OUT{s.eliminated_episode ? ` E${s.eliminated_episode}` : ''}
+                              </span>
+                            )}
+                          </div>
                           <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)' }}>
                             R{slot.round} · {manager?.name}
                             {slot.round === 5 && picker && ` (by ${picker.name})`}
@@ -513,6 +505,8 @@ export default function DraftPage() {
               {managers.map((m) => {
                 const mPicks = picksForManager(m.id);
                 const isUp = currentSlot && managerByIndex(currentSlot.picker_index)?.id === m.id;
+                const activePicks = mPicks.filter(p => survivorById(p.survivor_id)?.is_active).length;
+                const totalPicks = mPicks.length;
                 return (
                   <div
                     key={m.id}
@@ -525,16 +519,30 @@ export default function DraftPage() {
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
                       <span style={{ fontSize: '14px', fontWeight: 700, color: isUp ? '#FF6B35' : '#fff' }}>{m.name}</span>
-                      {isUp && (
-                        <span style={{
-                          fontSize: '8px', fontWeight: 800, letterSpacing: '2px', color: '#FF6B35',
-                          background: 'rgba(255,107,53,0.1)', padding: '3px 8px', borderRadius: '4px',
-                        }}>PICKING</span>
-                      )}
+                      <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                        {isUp && (
+                          <span style={{
+                            fontSize: '8px', fontWeight: 800, letterSpacing: '2px', color: '#FF6B35',
+                            background: 'rgba(255,107,53,0.1)', padding: '3px 8px', borderRadius: '4px',
+                          }}>PICKING</span>
+                        )}
+                        {/* Team health indicator */}
+                        {totalPicks > 0 && (
+                          <span style={{
+                            fontSize: '10px', fontWeight: 700,
+                            color: activePicks === totalPicks ? '#1ABC9C'
+                              : activePicks === 0 ? '#ff6b6b'
+                              : '#FFD54F',
+                          }}>
+                            {activePicks}/{totalPicks}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     {[1, 2, 3, 4, 5].map((round) => {
                       const pick = mPicks.find((p) => p.round === round);
                       const s = pick ? survivorById(pick.survivor_id) : null;
+                      const isElim = s ? !s.is_active : false;
                       return (
                         <div key={round} style={{
                           display: 'flex', alignItems: 'center', gap: '8px',
@@ -543,11 +551,29 @@ export default function DraftPage() {
                           <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.15)', minWidth: '22px', fontWeight: 700 }}>R{round}</span>
                           {s ? (
                             <>
-                              <SurvivorAvatar survivor={s} size={22} />
-                              <span style={{ fontSize: '12px', fontWeight: 500 }}>{s.name}</span>
-                              <span style={{ fontSize: '9px', color: TC[s.tribe], marginLeft: 'auto', fontWeight: 700 }}>
-                                {s.tribe.toUpperCase()}
+                              <div style={{ opacity: isElim ? 0.4 : 1, flexShrink: 0 }}>
+                                <SurvivorAvatar survivor={s} size={22} />
+                              </div>
+                              <span style={{
+                                fontSize: '12px', fontWeight: 500,
+                                color: isElim ? 'rgba(255,255,255,0.3)' : '#e8e8e8',
+                                textDecoration: isElim ? 'line-through' : 'none',
+                              }}>
+                                {s.name}
                               </span>
+                              {isElim ? (
+                                <span style={{
+                                  fontSize: '8px', fontWeight: 800, color: '#ff6b6b',
+                                  background: 'rgba(255,80,80,0.12)', padding: '1px 4px',
+                                  borderRadius: '3px', marginLeft: 'auto', whiteSpace: 'nowrap' as const,
+                                }}>
+                                  OUT{s.eliminated_episode ? ` E${s.eliminated_episode}` : ''}
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '9px', color: TC[s.tribe], marginLeft: 'auto', fontWeight: 700 }}>
+                                  {s.tribe.toUpperCase()}
+                                </span>
+                              )}
                             </>
                           ) : (
                             <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.08)' }}>—</span>
@@ -563,7 +589,7 @@ export default function DraftPage() {
         )}
       </div>
 
-      {/* ─── Draft Grid (below content on board view) ─── */}
+      {/* ─── Draft Grid ───────────────────────────────── */}
       {view === 'board' && (
         <div style={{ padding: '0 20px 24px' }}>
           <h3 style={{ margin: '16px 0 8px', fontSize: '11px', fontWeight: 700, letterSpacing: '2px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase' as const }}>
@@ -613,17 +639,36 @@ export default function DraftPage() {
                       {[1, 2, 3, 4, 5].map((round) => {
                         const pick = getManagerPick(m.id, round);
                         const s = pick ? survivorById(pick.survivor_id) : null;
+                        const isElim = s ? !s.is_active : false;
                         return (
                           <td key={round} style={{ padding: '5px 8px', textAlign: 'center' as const }}>
                             {s ? (
                               <div style={{
                                 display: 'inline-flex', alignItems: 'center', gap: '5px',
-                                background: `${TC[s.tribe]}15`,
+                                background: isElim ? 'rgba(255,255,255,0.04)' : `${TC[s.tribe]}15`,
                                 padding: '3px 8px 3px 3px', borderRadius: '20px',
-                                border: `1px solid ${TC[s.tribe]}40`,
+                                border: `1px solid ${isElim ? 'rgba(255,80,80,0.25)' : TC[s.tribe] + '40'}`,
+                                opacity: isElim ? 0.6 : 1,
                               }}>
-                                <SurvivorAvatar survivor={s} size={18} />
-                                <span style={{ fontSize: '11px', fontWeight: 600, color: TC[s.tribe] }}>{s.name}</span>
+                                <div style={{ opacity: isElim ? 0.5 : 1, flexShrink: 0 }}>
+                                  <SurvivorAvatar survivor={s} size={18} />
+                                </div>
+                                <span style={{
+                                  fontSize: '11px', fontWeight: 600,
+                                  color: isElim ? 'rgba(255,255,255,0.3)' : TC[s.tribe],
+                                  textDecoration: isElim ? 'line-through' : 'none',
+                                }}>
+                                  {s.name}
+                                </span>
+                                {isElim && (
+                                  <span style={{
+                                    fontSize: '8px', fontWeight: 800, color: '#ff6b6b',
+                                    background: 'rgba(255,80,80,0.15)', padding: '1px 4px',
+                                    borderRadius: '3px',
+                                  }}>
+                                    OUT{s.eliminated_episode ? ` E${s.eliminated_episode}` : ''}
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <span style={{ color: 'rgba(255,255,255,0.06)' }}>—</span>
