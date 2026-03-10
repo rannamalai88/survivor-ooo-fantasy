@@ -229,7 +229,7 @@ export default function DraftPage() {
           </div>
         </div>
 
-        {isCommissioner && picks.length > 0 && !showUndo && (
+        {isCommissioner && !isDraftComplete && picks.length > 0 && !showUndo && (
           <button
             onClick={() => setShowUndo(true)}
             style={{
@@ -242,7 +242,7 @@ export default function DraftPage() {
             ↩ Undo
           </button>
         )}
-        {showUndo && picks.length > 0 && (() => {
+        {showUndo && !isDraftComplete && picks.length > 0 && (() => {
           const lastPick = picks[picks.length - 1];
           const lastSurvivor = survivorById(lastPick.survivor_id);
           return (
