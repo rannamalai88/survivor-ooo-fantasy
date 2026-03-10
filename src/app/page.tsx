@@ -261,11 +261,28 @@ export default function HomePage() {
 
         {authManager && myTotals ? (
           <div className="mt-5">
-            {/* Score row */}
-            <div className="flex justify-center gap-5 flex-wrap">
-              {statItems.map(s => (
+            {/* Total — large primary stat */}
+            <div className="flex flex-col items-center mb-1">
+              <div className="text-[48px] font-extrabold leading-none" style={{ color: '#FF6B35' }}>
+                {Math.round(myTotals.grand_total)}
+              </div>
+              <div className="text-[10px] text-white/25 tracking-widest mt-1.5 font-bold">TOTAL POINTS</div>
+              <div
+                className="text-[13px] font-extrabold mt-1"
+                style={{ color: categoryRanks.total <= 3 ? '#1ABC9C' : categoryRanks.total <= 6 ? 'rgba(255,255,255,0.5)' : '#E74C3C' }}
+              >
+                #{categoryRanks.total} of {managers.length}
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="w-24 mx-auto my-3 border-t border-white/10" />
+
+            {/* Four sub-stats */}
+            <div className="flex justify-center gap-6 flex-wrap">
+              {statItems.slice(0, 4).map(s => (
                 <div key={s.label} className="flex flex-col items-center">
-                  <div className="text-[22px] font-extrabold leading-none" style={{ color: s.color }}>
+                  <div className="text-[18px] font-extrabold leading-none" style={{ color: s.color }}>
                     {s.value}
                   </div>
                   <div className="text-[9px] text-white/25 tracking-widest mt-1">{s.label}</div>
@@ -293,18 +310,17 @@ export default function HomePage() {
               View Full →
             </Link>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${myTeam.length}, 1fr)` }}>
             {myTeam.map(s => {
               const tColor = TRIBE_COLORS[s.tribe] || '#fff';
               return (
                 <div
                   key={s.survivorId}
-                  className="flex flex-col items-center gap-1.5 px-3 pt-3 pb-2.5 rounded-xl"
+                  className="flex flex-col items-center gap-1.5 px-2 pt-3 pb-2.5 rounded-xl"
                   style={{
                     background: s.isCaptain ? 'rgba(255,215,0,0.07)' : 'rgba(255,255,255,0.03)',
                     border: s.isCaptain ? '1px solid rgba(255,215,0,0.22)' : `1px solid ${tColor}22`,
                     opacity: s.is_active ? 1 : 0.4,
-                    minWidth: '72px',
                   }}
                 >
                   {/* Avatar */}
