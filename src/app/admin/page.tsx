@@ -84,6 +84,8 @@ export default function AdminScoresPage() {
 
   // Episode advancing
   const [advancing, setAdvancing] = useState(false);
+  const [nextEpisodeTitle, setNextEpisodeTitle] = useState('');
+  const [savingTitle, setSavingTitle] = useState(false);
 
   // Tab
   const [tab, setTab] = useState<'scores' | 'results' | 'net' | 'overrides' | 'season'>('scores');
@@ -97,7 +99,7 @@ export default function AdminScoresPage() {
       setLoading(true);
 
       const [seasonRes, survivorsRes, managersRes] = await Promise.all([
-        supabase.from('seasons').select('current_episode, total_episodes').eq('id', SEASON_ID).single(),
+        supabase.from('seasons').select('current_episode, total_episodes, next_episode_title').eq('id', SEASON_ID).single(),
         supabase.from('survivors').select('*').eq('season_id', SEASON_ID).order('name'),
         supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
       ]);
@@ -106,6 +108,7 @@ export default function AdminScoresPage() {
       setCurrentEpisode(ep);
       setSelectedEpisode(ep);
       setTotalEpisodes(seasonRes.data?.total_episodes || 13);
+      setNextEpisodeTitle(seasonRes.data?.next_episode_title || '');
       setSurvivors(survivorsRes.data || []);
       setManagers(managersRes.data || []);
     } catch (err: any) {
@@ -302,6 +305,25 @@ export default function AdminScoresPage() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  // ---- Save Next Episode Title ----
+  async function saveNextEpisodeTitle() {
+    try {
+      setSavingTitle(true);
+      const { error } = await supabase
+        .from('seasons')
+        .update({ next_episode_title: nextEpisodeTitle.trim() || null })
+        .eq('id', SEASON_ID);
+      if (error) throw error;
+      await logActivity('pick', `Episode ${currentEpisode} title set: "${nextEpisodeTitle.trim()}"`);
+      setSuccess('Episode title saved!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSavingTitle(false);
     }
   }
 
@@ -875,6 +897,40 @@ export default function AdminScoresPage() {
               <div className="text-right text-[10px] text-white/20 mt-1">
                 {Math.round(((currentEpisode - 1) / (totalEpisodes - 1)) * 100)}% through the season
               </div>
+            </div>
+
+            {/* Next Episode Title */}
+            <div className="mb-6 bg-white/[0.02] border border-white/[0.06] rounded-xl p-4">
+              <h4 className="text-xs font-bold text-white mb-1">💬 Next Episode Title (NET)</h4>
+              <p className="text-[10px] text-white/25 mb-3">
+                Shown to managers on the picks page so they know what quote to attribute. Update this when you advance the episode.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={nextEpisodeTitle}
+                  onChange={(e) => setNextEpisodeTitle(e.target.value)}
+                  placeholder={`Episode ${currentEpisode} title, e.g. "Did You Vote For a Swap?"`}
+                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/20"
+                />
+                <button
+                  onClick={saveNextEpisodeTitle}
+                  disabled={savingTitle}
+                  className="px-4 py-2 rounded-lg font-bold text-xs cursor-pointer border-none whitespace-nowrap"
+                  style={{
+                    background: 'linear-gradient(135deg, #9B59B6, #8E44AD)',
+                    color: '#fff',
+                    opacity: savingTitle ? 0.5 : 1,
+                  }}
+                >
+                  {savingTitle ? '⏳' : '💾 Save'}
+                </button>
+              </div>
+              {nextEpisodeTitle && (
+                <div className="mt-2 text-[10px] text-white/30">
+                  Currently showing: <span className="text-purple-400 font-semibold">"{nextEpisodeTitle}"</span>
+                </div>
+              )}
             </div>
 
             {/* Advance button */}

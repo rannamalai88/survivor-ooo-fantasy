@@ -134,7 +134,7 @@ function PicksContent() {
       const day = now.getDay();
       const daysUntil = (3 - day + 7) % 7 || (now.getUTCHours() >= 24 ? 7 : 0);
       const wed = new Date(now); wed.setDate(now.getDate() + daysUntil);
-      wed.setUTCHours(24, 0, 0, 0); // 7pm CDT = midnight UTC Thu
+      wed.setUTCHours(24, 0, 0, 0);
       return wed;
     }
     const dl = getDeadline();
@@ -227,6 +227,12 @@ function PicksContent() {
         </Section>
 
         <Section title="Name Episode Title (NET)" icon="💬" badge="REQUIRED" badgeColor="#1ABC9C">
+          {season?.next_episode_title ? (
+            <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', borderRadius: '8px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(26,188,156,0.6)', letterSpacing: '1.5px', textTransform: 'uppercase' as const, marginBottom: '3px' }}>This week&apos;s episode title</div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>&ldquo;{season.next_episode_title}&rdquo;</div>
+            </div>
+          ) : null}
           <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Which survivor says the <b style={{ color: 'rgba(255,255,255,0.5)' }}>episode title quote</b>? Worth <b style={{ color: '#1ABC9C' }}>3 points</b>.</p>
           <TribeFilter value={netFilter} onChange={setNetFilter} tribes={tribes} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
