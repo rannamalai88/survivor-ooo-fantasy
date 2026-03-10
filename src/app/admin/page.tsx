@@ -34,6 +34,22 @@ interface ManagerScoreResult {
 }
 
 // ============================================================
+// Helper: write a human-readable entry to activity_log
+// ============================================================
+async function logActivity(type: string, message: string) {
+  try {
+    await supabase.from('activity_log').insert({
+      season_id: SEASON_ID,
+      type,
+      message,
+      created_at: new Date().toISOString(),
+    });
+  } catch {
+    // Non-fatal — never block the main action
+  }
+}
+
+// ============================================================
 // Main Component
 // ============================================================
 export default function AdminScoresPage() {
@@ -161,12 +177,16 @@ export default function AdminScoresPage() {
 
       setPullStatus('done');
       const scoredCount = data.survivorsWithPoints || data.survivorsScored || 0;
-      setPullMessage(`${scoredCount} survivors scored` +
-        (data.eliminations?.length ? `, ${data.eliminations.length} new elimination(s)` : '') +
-        (data.warnings?.length ? ` | ${data.warnings.length} warning(s)` : ''));
+      const elimCount = data.eliminations?.length || 0;
+      const msg = `${scoredCount} survivors scored` +
+        (elimCount ? `, ${elimCount} new elimination(s)` : '') +
+        (data.warnings?.length ? ` | ${data.warnings.length} warning(s)` : '');
+      setPullMessage(msg);
 
       await loadEpisodeData(selectedEpisode);
       setExistingScores(true);
+
+      await logActivity('score', `FSG scores pulled for Episode ${selectedEpisode} — ${msg}`);
 
       setSuccess(`FSG scores pulled for Episode ${selectedEpisode}!`);
       setTimeout(() => setSuccess(null), 4000);
@@ -181,6 +201,8 @@ export default function AdminScoresPage() {
     try {
       setSaving(true);
       setError(null);
+
+      const changed: string[] = [];
 
       for (const survivorId of Object.keys(adjustments)) {
         const adj = adjustments[survivorId] || 0;
@@ -197,6 +219,15 @@ export default function AdminScoresPage() {
           .eq('season_id', SEASON_ID)
           .eq('survivor_id', survivorId)
           .eq('episode', selectedEpisode);
+
+        if (adj !== 0) {
+          const name = survivors.find(s => s.id === survivorId)?.name || survivorId;
+          changed.push(`${name} ${adj > 0 ? '+' : ''}${adj}`);
+        }
+      }
+
+      if (changed.length > 0) {
+        await logActivity('score', `Manual adjustments for Episode ${selectedEpisode}: ${changed.join(', ')}`);
       }
 
       setSuccess('Adjustments saved!');
@@ -227,6 +258,10 @@ export default function AdminScoresPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
+      const survivorName = survivors.find(s => s.id === netAnswerId)?.name || '?';
+      const titlePart = netTitle ? ` ("${netTitle}")` : '';
+      await logActivity('net', `NET answer set for Episode ${selectedEpisode}${titlePart}: ${survivorName}`);
+
       setSuccess('NET answer saved!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
@@ -252,6 +287,15 @@ export default function AdminScoresPage() {
 
       setCalcResults(data.results);
       setTab('results');
+
+      if (data.results?.length > 0) {
+        const top = [...data.results].sort((a: ManagerScoreResult, b: ManagerScoreResult) => b.fantasyPoints - a.fantasyPoints)[0];
+        const topName = managers.find(m => m.id === top.managerId)?.name || '?';
+        await logActivity('score', `Episode ${selectedEpisode} scores calculated — top scorer: ${topName} (${top.fantasyPoints} pts)`);
+      } else {
+        await logActivity('score', `Episode ${selectedEpisode} scores calculated`);
+      }
+
       setSuccess(`Manager scores calculated for Episode ${selectedEpisode}! Totals and rankings updated.`);
       setTimeout(() => setSuccess(null), 4000);
     } catch (err: any) {
@@ -276,6 +320,8 @@ export default function AdminScoresPage() {
         .eq('id', SEASON_ID);
 
       if (updateError) throw updateError;
+
+      await logActivity('pick', `Season advanced to Episode ${nextEpisode} — picks now open`);
 
       setCurrentEpisode(nextEpisode);
       setSelectedEpisode(nextEpisode);
@@ -306,6 +352,10 @@ export default function AdminScoresPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+
+      const survivorName = survivors.find(s => s.id === idolSurvivorId)?.name || '?';
+      await logActivity('score', `Idol-in-pocket penalty (-5) applied to ${survivorName} for Episode ${selectedEpisode}`);
+
       setSuccess('Idol penalty (-5) applied!');
       setIdolSurvivorId('');
       await loadEpisodeData(selectedEpisode);
@@ -339,6 +389,10 @@ export default function AdminScoresPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+
+      const mgrName = managers.find(m => m.id === overrideMgrId)?.name || '?';
+      await logActivity('score', `Score override: ${mgrName} Ep ${overrideEp} set to ${overrideScore} pts`);
+
       setSuccess('Manager score overridden!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
