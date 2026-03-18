@@ -121,8 +121,9 @@ function PicksContent() {
       const { data: prevPicks } = await supabase.from('weekly_picks').select('pool_pick_id').eq('season_id', sid).eq('manager_id', manager.id).lt('episode', ep).not('pool_pick_id', 'is', null);
       if (prevPicks) setUsedPoolPicks(prevPicks.map((p: any) => p.pool_pick_id).filter(Boolean));
 
-      const { data: chipsData } = await supabase.from('chips_used').select('chip_id').eq('season_id', sid).eq('manager_id', manager.id);
-      if (chipsData) setUsedChips(chipsData.map((c: any) => c.chip_id));
+      const { data: chipsData } = await supabase.from('chips_used').select('chip_id, episode').eq('season_id', sid).eq('manager_id', manager.id);
+      // Only chips used in PREVIOUS episodes count as "used" — current episode chip stays editable
+      if (chipsData) setUsedChips(chipsData.filter((c: any) => c.episode < ep).map((c: any) => c.chip_id));
     } catch (err) { console.error('Error loading picks:', err); }
     setLoading(false);
   }
@@ -167,7 +168,9 @@ function PicksContent() {
     try {
       if (existingPick) { const { error } = await supabase.from('weekly_picks').update(row).eq('id', existingPick.id); if (error) throw error; }
       else { const { error } = await supabase.from('weekly_picks').insert(row); if (error) throw error; }
-      if (chipPlay && !usedChips.includes(chipPlay)) { await supabase.from('chips_used').insert({ season_id: season.id, manager_id: manager.id, chip_id: chipPlay, episode: currentEp, target: chipTarget }); }
+      // Always delete then re-insert so chip choice stays editable until locked
+      await supabase.from('chips_used').delete().eq('season_id', season.id).eq('manager_id', manager.id).eq('episode', currentEp);
+      if (chipPlay) { await supabase.from('chips_used').insert({ season_id: season.id, manager_id: manager.id, chip_id: chipPlay, episode: currentEp, target: chipTarget }); }
       setSaveMessage('Picks submitted! You can update them until the deadline.');
       await loadData();
     } catch (err: any) { setSaveMessage(`Error: ${err.message || 'Could not save'}`); }
