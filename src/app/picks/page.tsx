@@ -245,7 +245,7 @@ function PicksContent() {
 
         <Section title="Game Chips" icon="🎰" badge={activeChipWindow ? 'AVAILABLE' : 'NO CHIP THIS WEEK'} badgeColor={activeChipWindow ? '#FFD54F' : 'rgba(255,255,255,0.25)'}>
           {activeChipWindow ? (<>
-            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 14px', lineHeight: 1.5 }}>Optional chip play. <b style={{ color: 'rgba(255,255,255,0.5)' }}>Cannot be undone</b> after submission.</p>
+            <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 14px', lineHeight: 1.5 }}>Optional chip play.</p>
             {availableChips.map(c => (
               <div key={c.id} onClick={() => { if (isLocked) return; setChipPlay(chipPlay === c.id ? null : c.id); setChipTarget(null); }}
                 style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', background: chipPlay === c.id ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.02)', border: chipPlay === c.id ? '1px solid rgba(255,215,0,0.25)' : '1px solid rgba(255,255,255,0.04)', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', marginBottom: '6px' }}>
