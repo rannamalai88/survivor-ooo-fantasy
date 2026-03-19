@@ -97,7 +97,7 @@ export const NAV_LINKS = [
   { href: '/leaderboard', label: 'Leaderboard', icon: '🏆' },
   { href: '/my-team', label: 'My Team', icon: '👥' },
   { href: '/picks', label: 'Picks', icon: '✅' },
-  { href: '/scoreboard', label: 'Scoreboard', icon: '📊' },
+  { href: '/scoreboard', label: 'Fantasy Scoring', icon: '📊' },
   { href: '/pool', label: 'Pool', icon: '🌊' },
   { href: '/dynasty', label: 'Dynasty', icon: '👑' },
   { href: '/rules', label: 'Rules', icon: '📖' },
