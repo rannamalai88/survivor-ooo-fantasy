@@ -645,10 +645,12 @@ export default function MyTeamPage() {
                         </td>
                       );
                     }
+                    // Collapsed: base + captain + VO only (no chips)
+                    const epCollapsed = epTeam + epCapt + epVo;
                     return (
                       <td key={ep} className="p-1.5 text-center"
                         style={{ background: isLatest ? 'rgba(255,107,53,0.02)' : 'transparent' }}>
-                        <span className="text-[11px] font-bold text-orange-400">{epTotal || '—'}</span>
+                        <span className="text-[11px] font-bold text-orange-400">{epCollapsed || '—'}</span>
                       </td>
                     );
                   })}
@@ -668,7 +670,9 @@ export default function MyTeamPage() {
                       </div>
                     ) : (
                       <div className="p-3 text-center">
-                        <span className="text-[14px] font-extrabold text-orange-400">{scoringTotals.teamPts}</span>
+                        <span className="text-[14px] font-extrabold text-orange-400">
+                          {scoringTotals.teamPts + scoringTotals.captainPts + scoringTotals.votedOutPts}
+                        </span>
                       </div>
                     )}
                   </td>
