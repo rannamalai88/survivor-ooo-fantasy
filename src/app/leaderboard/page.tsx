@@ -351,8 +351,8 @@ export default function LeaderboardPage() {
                     </th>
                   ))}
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider cursor-pointer hover:text-white/60" onClick={() => setSortKey('pool_score')}>POOL PTS</th>
-                  <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">QUIN</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider cursor-pointer hover:text-white/60" onClick={() => setSortKey('net_total')}>NET</th>
+                  <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">QUIN</th>
                   <th className="text-center p-3 text-white/50 font-extrabold text-[10px] tracking-wider cursor-pointer hover:text-white" onClick={() => setSortKey('grand_total')}>TOTAL</th>
                 </tr>
               </thead>
@@ -451,9 +451,6 @@ export default function LeaderboardPage() {
                         </span>
                       </td>
 
-                      {/* Quinfecta */}
-                      <td className="p-3 text-center text-white/25">{m.quinfecta_score || '—'}</td>
-
                       {/* NET */}
                       <td className="p-3 text-center">
                         <span className="font-semibold px-2 py-0.5 rounded"
@@ -461,6 +458,9 @@ export default function LeaderboardPage() {
                           {m.net_total}
                         </span>
                       </td>
+
+                      {/* Quinfecta */}
+                      <td className="p-3 text-center text-white/25">{m.quinfecta_score || '—'}</td>
 
                       {/* Grand Total */}
                       <td className="p-3 text-center">
