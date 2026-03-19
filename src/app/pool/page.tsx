@@ -279,9 +279,18 @@ export default function PoolBoardPage() {
             <tr className="bg-white/[0.03]">
               <th className="text-left p-2.5 text-white/35 font-bold text-[10px] tracking-wider sticky left-0 bg-[#0d0d15] z-10 min-w-[120px]">MANAGER</th>
               <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">STATUS</th>
-              {episodes.map(ep => (
-                <th key={ep} className="text-center p-2 text-white/25 font-bold text-[9px] tracking-wider min-w-[72px]">E{ep}</th>
-              ))}
+              {episodes.map(ep => {
+                const eliminatedId = eliminatedByEp.get(ep);
+                const eliminatedName = eliminatedId ? survivorMap.get(eliminatedId)?.name : null;
+                return (
+                  <th key={ep} className="text-center p-2 text-white/25 font-bold text-[9px] tracking-wider min-w-[80px]">
+                    <div>E{ep}</div>
+                    {eliminatedName && (
+                      <div className="text-[8px] font-semibold text-red-400/60 mt-0.5">✗ {eliminatedName}</div>
+                    )}
+                  </th>
+                );
+              })}
               <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">WEEKS SAFE</th>
             </tr>
           </thead>
@@ -322,16 +331,26 @@ export default function PoolBoardPage() {
 
                     if (pick.type === 'safe') {
                       const tColor = pick.survivor ? TRIBE_COLORS[pick.survivor.tribe] : '#fff';
+                      const laterEliminated = pick.survivor && !pick.survivor.is_active &&
+                        pick.survivor.eliminated_episode !== pick.episode;
                       return (
                         <td key={pick.episode} className="p-1.5 text-center">
                           <div
                             className="inline-flex items-center gap-1 px-2 py-1 rounded-md"
                             style={{ background: 'rgba(26,188,156,0.08)', border: '1px solid rgba(26,188,156,0.15)' }}
+                            title={laterEliminated ? `${pick.survivor?.name} later eliminated E${pick.survivor?.eliminated_episode}` : undefined}
                           >
-                            <span className="text-[10px] font-semibold" style={{ color: tColor }}>
+                            <span
+                              className="text-[10px] font-semibold"
+                              style={{
+                                color: laterEliminated ? 'rgba(255,255,255,0.3)' : tColor,
+                                textDecoration: laterEliminated ? 'line-through' : 'none',
+                              }}
+                            >
                               {pick.survivor?.name || '?'}
                             </span>
                             <span className="text-emerald-400 text-[9px]">✓</span>
+                            {laterEliminated && <span className="text-[8px] text-red-400/60">💀</span>}
                           </div>
                         </td>
                       );
@@ -394,7 +413,8 @@ export default function PoolBoardPage() {
       {/* Legend */}
       <div className="mt-4 flex items-center gap-4 flex-wrap text-[10px] text-white/25">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> ✓ Safe pick</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> 💀 Drowned (pick eliminated)</span>
+        <span>✓ 💀 Safe pick (survivor later eliminated)</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" /> 🌊 Drowned (pick eliminated)</span>
         <span>🚪 Backdoor attempt</span>
         <span>🛡️ Immunity Idol holder</span>
       </div>
