@@ -336,6 +336,45 @@ export default function AdminScoresPage() {
 
       const nextEpisode = currentEpisode + 1;
 
+      // --- Auto-drown managers who missed their pool pick this episode ---
+      const { data: activePool } = await supabase
+        .from('pool_status')
+        .select('manager_id')
+        .eq('season_id', SEASON_ID)
+        .eq('status', 'active');
+
+      if (activePool && activePool.length > 0) {
+        const activeManagerIds = activePool.map((r: any) => r.manager_id);
+
+        const { data: submittedPicks } = await supabase
+          .from('weekly_picks')
+          .select('manager_id')
+          .eq('season_id', SEASON_ID)
+          .eq('episode', currentEpisode)
+          .not('pool_pick_id', 'is', null)
+          .in('manager_id', activeManagerIds);
+
+        const submittedIds = new Set((submittedPicks || []).map((r: any) => r.manager_id));
+        const missedIds = activeManagerIds.filter((id: string) => !submittedIds.has(id));
+
+        if (missedIds.length > 0) {
+          const { error: drownError } = await supabase
+            .from('pool_status')
+            .update({ status: 'drowned' })
+            .eq('season_id', SEASON_ID)
+            .in('manager_id', missedIds);
+
+          if (drownError) throw drownError;
+
+          const missedNames = managers
+            .filter(m => missedIds.includes(m.id))
+            .map(m => m.name)
+            .join(', ');
+          await logActivity('pool', `Auto-drowned for missing Episode ${currentEpisode} pool pick: ${missedNames}`);
+        }
+      }
+
+      // --- Advance the season ---
       const { error: updateError } = await supabase
         .from('seasons')
         .update({ current_episode: nextEpisode })
