@@ -566,7 +566,8 @@ export default function MyTeamPage() {
                           );
                         }
 
-                        // Collapsed
+                        // Collapsed — show combined (FSG + capt bonus + VO bonus)
+                        const combinedPts = (pts || 0) + captBonus + voBonus;
                         return (
                           <td key={ep} className="p-1.5 text-center"
                             style={{ background: isLatest ? 'rgba(255,107,53,0.02)' : 'transparent' }}>
@@ -574,7 +575,7 @@ export default function MyTeamPage() {
                               <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded ${isCaptEp ? 'text-yellow-300 font-extrabold' : 'text-white/60'}`}
                                 style={{ background: heatColor(pts, min, max) }}>
                                 {isCaptEp && <span className="text-[7px] mr-0.5">👑</span>}
-                                {pts}
+                                {combinedPts}
                               </span>
                             ) : <span className="text-white/[0.08]">—</span>}
                           </td>
@@ -601,7 +602,9 @@ export default function MyTeamPage() {
                           </div>
                         ) : (
                           <div className="p-3 text-center">
-                            <span className="text-[13px] font-extrabold text-white">{s.total}</span>
+                            <span className="text-[13px] font-extrabold text-white">
+                              {survivorTeamTotal + survivorCaptTotal + survivorVoTotal}
+                            </span>
                           </div>
                         )}
                       </td>
