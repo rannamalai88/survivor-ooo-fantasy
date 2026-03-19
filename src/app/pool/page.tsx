@@ -28,6 +28,11 @@ interface WeeklyPickRow {
   pool_backdoor_id: string | null;
 }
 
+interface ManagerTotalRow {
+  manager_id: string;
+  pool_score: number;
+}
+
 interface SurvivorInfo {
   id: string;
   name: string;
@@ -70,6 +75,7 @@ export default function PoolBoardPage() {
   const [currentEpisode, setCurrentEpisode] = useState(2);
   const [totalEpisodes, setTotalEpisodes] = useState(13);
   const [picksLocked, setPicksLocked] = useState(false);
+  const [managerTotals, setManagerTotals] = useState<ManagerTotalRow[]>([]);
 
   useEffect(() => {
     loadData();
@@ -82,12 +88,13 @@ export default function PoolBoardPage() {
   async function loadData() {
     try {
       setLoading(true);
-      const [seasonRes, managersRes, poolRes, picksRes, survivorsRes] = await Promise.all([
+      const [seasonRes, managersRes, poolRes, picksRes, survivorsRes, totalsRes] = await Promise.all([
         supabase.from('seasons').select('current_episode, total_episodes').eq('id', SEASON_ID).single(),
         supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
         supabase.from('pool_status').select('*').eq('season_id', SEASON_ID),
         supabase.from('weekly_picks').select('manager_id, episode, pool_pick_id, pool_backdoor_id').eq('season_id', SEASON_ID).order('episode'),
         supabase.from('survivors').select('id, name, tribe, is_active, eliminated_episode').eq('season_id', SEASON_ID),
+        supabase.from('manager_totals').select('manager_id, pool_score').eq('season_id', SEASON_ID),
       ]);
 
       setCurrentEpisode(seasonRes.data?.current_episode || 2);
@@ -96,6 +103,7 @@ export default function PoolBoardPage() {
       setPoolStatuses(poolRes.data || []);
       setWeeklyPicks(picksRes.data || []);
       setSurvivors(survivorsRes.data || []);
+      setManagerTotals(totalsRes.data || []);
     } catch (err) {
       console.error('Failed to load pool data:', err);
     } finally {
@@ -292,6 +300,7 @@ export default function PoolBoardPage() {
                 );
               })}
               <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">WEEKS SAFE</th>
+              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">POOL PTS</th>
             </tr>
           </thead>
           <tbody>
@@ -402,6 +411,16 @@ export default function PoolBoardPage() {
                   <td className="p-2.5 text-center">
                     <span className="font-bold text-white">{m.weeksSafe}</span>
                     <span className="text-white/20">/{totalPoolWeeks}</span>
+                  </td>
+                  {/* Pool Pts */}
+                  <td className="p-2.5 text-center">
+                    {(() => {
+                      const t = managerTotals.find(t => t.manager_id === m.id);
+                      const pts = t ? Math.round(t.pool_score) : 0;
+                      return pts > 0
+                        ? <span className="text-[13px] font-bold text-emerald-400">{pts}</span>
+                        : <span className="text-white/20">—</span>;
+                    })()}
                   </td>
                 </tr>
               );
