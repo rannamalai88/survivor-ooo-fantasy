@@ -93,6 +93,7 @@ function PicksContent() {
   const [netFilter, setNetFilter] = useState('All');
   const [timeLeft, setTimeLeft] = useState('');
   const [isPastDeadline, setIsPastDeadline] = useState(false);
+  const [captainPrivilegeLost, setCaptainPrivilegeLost] = useState(false);
 
   useEffect(() => { if (manager) loadData(); }, [manager]);
 
@@ -124,6 +125,16 @@ function PicksContent() {
       const { data: chipsData } = await supabase.from('chips_used').select('chip_id, episode').eq('season_id', sid).eq('manager_id', manager.id);
       // Only chips used in PREVIOUS episodes count as "used" — current episode chip stays editable
       if (chipsData) setUsedChips(chipsData.filter((c: any) => c.episode < ep).map((c: any) => c.chip_id));
+
+      // Check if captain privilege has been permanently lost (any prior episode where captain was voted out)
+      const { data: captainLostData } = await supabase
+        .from('manager_scores')
+        .select('captain_lost')
+        .eq('season_id', sid)
+        .eq('manager_id', manager.id)
+        .eq('captain_lost', true)
+        .limit(1);
+      setCaptainPrivilegeLost((captainLostData || []).length > 0);
     } catch (err) { console.error('Error loading picks:', err); }
     setLoading(false);
   }
@@ -158,7 +169,7 @@ function PicksContent() {
   const filteredNet = netFilter === 'All' ? activeSurvivors : activeSurvivors.filter(s => s.tribe === netFilter);
   const availableChips = CHIPS.filter(c => { if (usedChips.includes(c.id)) return false; const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number); return currentWeek >= lo && currentWeek <= hi; });
   const activeChipWindow = availableChips.length > 0;
-  const picksComplete = captain !== null && (poolStatus !== 'active' || poolPick !== null) && netPick !== null;
+  const picksComplete = (captainPrivilegeLost || captain !== null) && (poolStatus !== 'active' || poolPick !== null) && netPick !== null;
   const isLocked = existingPick?.is_locked || isPastDeadline;
 
   async function savePicks() {
@@ -205,12 +216,24 @@ function PicksContent() {
         {saveMessage && <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '14px', fontSize: '13px', background: saveMessage.startsWith('Error') ? 'rgba(255,80,80,0.08)' : 'rgba(26,188,156,0.08)', border: saveMessage.startsWith('Error') ? '1px solid rgba(255,80,80,0.2)' : '1px solid rgba(26,188,156,0.2)', color: saveMessage.startsWith('Error') ? '#FF5050' : '#1ABC9C' }}>{saveMessage}</div>}
         {existingPick && !saveMessage && <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '12px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', color: 'rgba(26,188,156,0.7)' }}>✅ Picks submitted — you can update until the deadline</div>}
 
-        <Section title="Captain Designation" icon="👑" badge="REQUIRED" badgeColor="#FFD54F">
-          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {activeTeam.length === 0 ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center' }}>No active survivors on your team</div> :
-            activeTeam.map(s => <SurvivorOption key={s.id} s={s} selected={captain === s.id} onClick={() => !isLocked && setCaptain(s.id)} disabled={isLocked} />)}
-          </div>
+        <Section title="Captain Designation" icon="👑" badge={captainPrivilegeLost ? "PRIVILEGE LOST" : "REQUIRED"} badgeColor={captainPrivilegeLost ? "#95a5a6" : "#FFD54F"}>
+          {captainPrivilegeLost ? (
+            <div style={{ padding: '14px 16px', background: 'rgba(149,165,166,0.06)', border: '1px solid rgba(149,165,166,0.15)', borderRadius: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '22px', marginBottom: '6px' }}>💀</div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'rgba(255,255,255,0.4)' }}>Captain Privilege Lost</div>
+              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)', marginTop: '4px', lineHeight: 1.5 }}>
+                Your designated captain was voted out. The 2x multiplier no longer applies.
+              </div>
+            </div>
+          ) : (
+            <>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {activeTeam.length === 0 ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center' }}>No active survivors on your team</div> :
+                activeTeam.map(s => <SurvivorOption key={s.id} s={s} selected={captain === s.id} onClick={() => !isLocked && setCaptain(s.id)} disabled={isLocked} />)}
+              </div>
+            </>
+          )}
         </Section>
 
         <Section title="Survivor Pool" icon="🌊" badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : 'BURNT'} badgeColor={poolStatus === 'active' ? '#1ABC9C' : poolStatus === 'drowned' ? '#FF6B35' : '#FF5050'}>
@@ -285,7 +308,7 @@ function PicksContent() {
           </button>
           {!picksComplete && !isLocked && (
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '8px' }}>
-              {!captain && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Captain</span>}
+              {!captain && !captainPrivilegeLost && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Captain</span>}
               {poolStatus === 'active' && !poolPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Pool</span>}
               {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ NET</span>}
             </div>
