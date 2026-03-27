@@ -525,6 +525,9 @@ export default function ScoreboardPage() {
                                     return { ...s, epPts: score?.final_points || 0, isVotedOut, isCaptain };
                                   }).sort((a, b) => b.epPts - a.epPts);
 
+                                  // All survivors eliminated this episode who are on this team
+                                  const votedOutThisEp = teamWithScores.filter(s => s.isVotedOut);
+
                                   const tc = TRIBE_COLORS as Record<string, string>;
 
                                   return (
@@ -580,16 +583,24 @@ export default function ScoreboardPage() {
                                           </div>
                                         )}
 
-                                        {/* Voted out bonus */}
+                                        {/* Voted out bonus — one line per eliminated survivor */}
                                         {d.votedOut > 0 && (
                                           <div className="border-t border-white/[0.04] pt-2">
                                             <div className="text-[8px] font-bold tracking-widest text-emerald-400/50 uppercase mb-1">Voted Out Bonus</div>
-                                            <div className="flex items-center justify-between">
-                                              <span className="text-[11px] text-white/50">
-                                                {teamWithScores.find(s => s.isVotedOut)?.name || 'Eliminated'}
-                                              </span>
-                                              <span className="text-[11px] font-bold text-emerald-400">+{d.votedOut}</span>
-                                            </div>
+                                            {votedOutThisEp.length > 0 ? (
+                                              votedOutThisEp.map(s => (
+                                                <div key={s.id} className="flex items-center justify-between">
+                                                  <span className="text-[11px] text-white/50">{s.name}</span>
+                                                  <span className="text-[11px] font-bold text-emerald-400">+{s.elimination_order || 0}</span>
+                                                </div>
+                                              ))
+                                            ) : (
+                                              // Fallback: shouldn't normally hit, but just in case
+                                              <div className="flex items-center justify-between">
+                                                <span className="text-[11px] text-white/50">Eliminated</span>
+                                                <span className="text-[11px] font-bold text-emerald-400">+{d.votedOut}</span>
+                                              </div>
+                                            )}
                                           </div>
                                         )}
 

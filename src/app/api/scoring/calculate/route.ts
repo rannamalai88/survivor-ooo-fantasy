@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     // 5. Get weekly picks
     const { data: weeklyPicks } = await supabase
       .from('weekly_picks')
-      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id')
+      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id, pool_backdoor_id')
       .eq('season_id', seasonId)
       .eq('episode', episode);
 
@@ -234,11 +234,13 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 10c. Update pool status — increment weeks_survived or drown
+    // 10c. Update pool status for ACTIVE managers —
+    //      increment weeks_survived if their pick survived,
+    //      or drown them if their pick was eliminated.
     // ----------------------------------------------------------------
     const { data: allPoolPicks } = await supabase
       .from('weekly_picks')
-      .select('manager_id, pool_pick_id')
+      .select('manager_id, pool_pick_id, pool_backdoor_id')
       .eq('season_id', seasonId)
       .eq('episode', episode);
 
@@ -260,6 +262,8 @@ export async function POST(request: NextRequest) {
           .eq('manager_id', pick.manager_id)
           .maybeSingle();
 
+        // Only process currently-active managers here.
+        // Drowned managers are handled separately in 10d below.
         if (currentPool && currentPool.status !== 'active') continue;
 
         if (pickEliminated) {
@@ -280,6 +284,56 @@ export async function POST(request: NextRequest) {
               manager_id: pick.manager_id,
               status: 'active',
               weeks_survived: (currentPool?.weeks_survived || 0) + 1,
+            },
+            { onConflict: 'season_id,manager_id' }
+          );
+        }
+      }
+    }
+
+    // ----------------------------------------------------------------
+    // 10d. Backdoor reactivation — check drowned managers' backdoor picks.
+    //
+    //      A drowned manager submits pool_backdoor_id instead of a normal
+    //      pick. If the survivor they named was eliminated THIS episode,
+    //      they guessed correctly and get reactivated (status → 'active').
+    //      Their weeks_survived is NOT incremented — they sat out this week.
+    //      If they guessed wrong, they stay drowned (no change needed).
+    // ----------------------------------------------------------------
+    const { data: drownedPools } = await supabase
+      .from('pool_status')
+      .select('manager_id, weeks_survived')
+      .eq('season_id', seasonId)
+      .eq('status', 'drowned');
+
+    if (drownedPools && drownedPools.length > 0) {
+      const drownedManagerIds = drownedPools.map((p) => p.manager_id);
+
+      // Find any drowned manager who submitted a backdoor pick this episode
+      const backdoorPicks = (allPoolPicks || []).filter(
+        (p) => drownedManagerIds.includes(p.manager_id) && p.pool_backdoor_id
+      );
+
+      for (const pick of backdoorPicks) {
+        const backdoorSurvivor = survivors?.find((s) => s.id === pick.pool_backdoor_id);
+
+        // Correct if the named survivor was eliminated specifically this episode
+        const guessedCorrectly =
+          backdoorSurvivor &&
+          !backdoorSurvivor.is_active &&
+          backdoorSurvivor.eliminated_episode === episode;
+
+        if (guessedCorrectly) {
+          const poolEntry = drownedPools.find((p) => p.manager_id === pick.manager_id);
+
+          await supabase.from('pool_status').upsert(
+            {
+              season_id: seasonId,
+              manager_id: pick.manager_id,
+              status: 'active',
+              drowned_episode: null,   // clear the drowning record
+              weeks_survived: poolEntry?.weeks_survived || 0,
+              // weeks_survived stays the same — no credit for the drowned week
             },
             { onConflict: 'season_id,manager_id' }
           );

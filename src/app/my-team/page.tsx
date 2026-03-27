@@ -476,18 +476,20 @@ export default function MyTeamPage() {
                   const isCaptain = s.survivor_id === currentCaptainId;
                   const tColor = TC[s.survivor.tribe] || '#888';
                   const isOut = !s.survivor.is_active;
+
                   // Per-survivor totals across all episodes
                   const survivorTeamTotal = s.total;
+
                   // Captain bonus attributable to this survivor
                   const survivorCaptTotal = s.captainEps.reduce((sum, ep) => {
                     const ms = managerScores.find(m => m.episode === ep);
                     return sum + (ms?.captain_bonus || 0);
                   }, 0);
-                  // V.O. bonus — only if this survivor was eliminated
-                  const survivorVoTotal = isOut ? managerScores.reduce((sum, ms) => {
-                    if (ms.episode === s.survivor.eliminated_episode) return sum + (ms.voted_out_bonus || 0);
-                    return sum;
-                  }, 0) : 0;
+
+                  // FIX: V.O. bonus for this individual survivor = their own elimination_order.
+                  // Using ms.voted_out_bonus (the manager's total for that episode) was wrong
+                  // in double-elimination episodes — it gave BOTH survivors the combined total.
+                  const survivorVoTotal = isOut ? (s.survivor.elimination_order || 0) : 0;
 
                   return (
                     <tr key={s.survivor_id}
@@ -534,7 +536,12 @@ export default function MyTeamPage() {
                         const isExp = expandedEpisodes.has(ep);
                         const ms = managerScores.find(m => m.episode === ep);
                         const captBonus = isCaptEp ? (ms?.captain_bonus || 0) : 0;
-                        const voBonus = isVoEp ? (ms?.voted_out_bonus || 0) : 0;
+
+                        // FIX: Per-episode V.O. bonus for this survivor = their elimination_order,
+                        // not ms.voted_out_bonus (which is the manager's total and would be wrong
+                        // in double-elimination episodes).
+                        const voBonus = isVoEp ? (s.survivor.elimination_order || 0) : 0;
+
                         const { min, max } = epHeatRanges[ep] || { min: 0, max: 0 };
 
                         if (isExp) {
@@ -555,7 +562,7 @@ export default function MyTeamPage() {
                                     ? <span className="text-[11px] font-bold text-yellow-300">+{captBonus}</span>
                                     : <span className="text-white/[0.08]">—</span>}
                                 </div>
-                                {/* V.O. bonus */}
+                                {/* V.O. bonus — this survivor's individual elimination_order */}
                                 <div className="flex-1 text-center p-2">
                                   {voBonus > 0
                                     ? <span className="text-[11px] font-bold text-emerald-400">+{voBonus}</span>
@@ -624,7 +631,7 @@ export default function MyTeamPage() {
                     const ms = managerScores.find(m => m.episode === ep);
                     const epTeam = ms?.base_team_points || 0;
                     const epCapt = ms?.captain_bonus || 0;
-                    const epVo   = ms?.voted_out_bonus || 0;
+                    const epVo   = ms?.voted_out_bonus || 0;  // manager total for episode — correct for the totals row
                     const epTotal = ms?.fantasy_points || 0;
 
                     if (isExp) {
@@ -654,7 +661,7 @@ export default function MyTeamPage() {
                       </td>
                     );
                   })}
-                  {/* Total col */}
+                  {/* Total col — uses scoringTotals which correctly sums manager_scores.voted_out_bonus */}
                   <td className="p-0">
                     {expandTotal ? (
                       <div className="flex">
