@@ -65,6 +65,222 @@ const NAV_TILES = [
 ];
 
 // ============================================================
+// Rank Tracking Chart
+// ============================================================
+interface RankPoint { episode: number; rank: number; }
+
+function RankTrackingChart({
+  rankHistory,
+  managers,
+  myManagerId,
+}: {
+  rankHistory: Record<string, RankPoint[]>;
+  managers: Manager[];
+  myManagerId: string | null;
+}) {
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+
+  const episodes = useMemo(() => {
+    const eps = new Set<number>();
+    Object.values(rankHistory).forEach(pts => pts.forEach(p => eps.add(p.episode)));
+    return Array.from(eps).sort((a, b) => a - b);
+  }, [rankHistory]);
+
+  if (episodes.length < 2) {
+    return (
+      <div style={{ textAlign: 'center', padding: '32px', color: 'rgba(255,255,255,0.15)', fontSize: '12px' }}>
+        Rankings will appear after at least 2 scored episodes.
+      </div>
+    );
+  }
+
+  const totalManagers = managers.length || 12;
+
+  // Chart geometry
+  const W = 680;
+  const H = 200;
+  const PAD_LEFT = 28;
+  const PAD_RIGHT = 90;  // room for right-edge name labels
+  const PAD_TOP = 12;
+  const PAD_BOT = 20;
+  const plotW = W - PAD_LEFT - PAD_RIGHT;
+  const plotH = H - PAD_TOP - PAD_BOT;
+
+  function xOf(ep: number) {
+    if (episodes.length === 1) return PAD_LEFT + plotW / 2;
+    const idx = episodes.indexOf(ep);
+    return PAD_LEFT + (idx / (episodes.length - 1)) * plotW;
+  }
+
+  function yOf(rank: number) {
+    // rank 1 → top, rank totalManagers → bottom
+    return PAD_TOP + ((rank - 1) / (totalManagers - 1)) * plotH;
+  }
+
+  function pathD(pts: RankPoint[]) {
+    if (pts.length === 0) return '';
+    const sorted = [...pts].sort((a, b) => a.episode - b.episode);
+    return sorted.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.episode).toFixed(1)},${yOf(p.rank).toFixed(1)}`).join(' ');
+  }
+
+  // Determine which manager ids to label at the right edge:
+  // always label current user; also label whoever is #1 at the last episode
+  const lastEp = episodes[episodes.length - 1];
+  const finalRanks = managers.map(m => ({
+    id: m.id,
+    rank: rankHistory[m.id]?.find(p => p.episode === lastEp)?.rank ?? 99,
+  })).sort((a, b) => a.rank - b.rank);
+
+  const labelIds = new Set<string>();
+  if (myManagerId) labelIds.add(myManagerId);
+  if (finalRanks[0]) labelIds.add(finalRanks[0].id);  // current #1
+  if (finalRanks[1]) labelIds.add(finalRanks[1].id);  // current #2
+
+  return (
+    <div style={{ width: '100%', overflowX: 'auto' }}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: '100%', minWidth: '320px', display: 'block' }}
+        onMouseLeave={() => setHoveredId(null)}
+      >
+        {/* Y-axis rank labels */}
+        {[1, 3, 6, 9, 12].filter(r => r <= totalManagers).map(r => (
+          <text
+            key={r}
+            x={PAD_LEFT - 6}
+            y={yOf(r) + 4}
+            textAnchor="end"
+            fontSize="9"
+            fill="rgba(255,255,255,0.2)"
+            fontFamily="-apple-system,sans-serif"
+            fontWeight="600"
+          >
+            {r === 1 ? '1st' : `#${r}`}
+          </text>
+        ))}
+
+        {/* Horizontal gridlines at each rank label */}
+        {[1, 3, 6, 9, 12].filter(r => r <= totalManagers).map(r => (
+          <line
+            key={r}
+            x1={PAD_LEFT}
+            y1={yOf(r)}
+            x2={PAD_LEFT + plotW}
+            y2={yOf(r)}
+            stroke="rgba(255,255,255,0.04)"
+            strokeWidth="1"
+          />
+        ))}
+
+        {/* Top gridline (rank 1) slightly brighter */}
+        <line
+          x1={PAD_LEFT} y1={yOf(1)}
+          x2={PAD_LEFT + plotW} y2={yOf(1)}
+          stroke="rgba(255,215,0,0.1)"
+          strokeWidth="1"
+        />
+
+        {/* X-axis episode labels */}
+        {episodes.map(ep => (
+          <text
+            key={ep}
+            x={xOf(ep)}
+            y={H - 4}
+            textAnchor="middle"
+            fontSize="9"
+            fill="rgba(255,255,255,0.2)"
+            fontFamily="-apple-system,sans-serif"
+            fontWeight="600"
+          >
+            E{ep}
+          </text>
+        ))}
+
+        {/* Vertical tick lines at each episode */}
+        {episodes.map(ep => (
+          <line
+            key={ep}
+            x1={xOf(ep)} y1={PAD_TOP}
+            x2={xOf(ep)} y2={PAD_TOP + plotH}
+            stroke="rgba(255,255,255,0.03)"
+            strokeWidth="1"
+          />
+        ))}
+
+        {/* Manager lines — dim ones first, highlighted on top */}
+        {[false, true].map(isHighlightPass =>
+          managers.map(m => {
+            const isMe = m.id === myManagerId;
+            const isHovered = m.id === hoveredId;
+            const shouldRender = isHighlightPass ? (isMe || isHovered) : (!isMe && !isHovered);
+            if (!shouldRender) return null;
+
+            const pts = (rankHistory[m.id] || []).sort((a, b) => a.episode - b.episode);
+            if (pts.length === 0) return null;
+
+            const lastPt = pts[pts.length - 1];
+            const showLabel = labelIds.has(m.id) || isHovered;
+
+            const lineColor = isMe
+              ? '#FF6B35'
+              : isHovered
+              ? '#FFD54F'
+              : 'rgba(255,255,255,0.12)';
+            const strokeW = isMe ? 2.5 : isHovered ? 1.8 : 1;
+            const dotR = isMe ? 3.5 : isHovered ? 3 : 2;
+
+            return (
+              <g
+                key={m.id}
+                onMouseEnter={() => setHoveredId(m.id)}
+                style={{ cursor: 'default' }}
+              >
+                {/* Line */}
+                <path
+                  d={pathD(pts)}
+                  fill="none"
+                  stroke={lineColor}
+                  strokeWidth={strokeW}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+
+                {/* Dots at each episode */}
+                {pts.map(p => (
+                  <circle
+                    key={p.episode}
+                    cx={xOf(p.episode)}
+                    cy={yOf(p.rank)}
+                    r={dotR}
+                    fill={lineColor}
+                    stroke="#0a0a0f"
+                    strokeWidth="1.5"
+                  />
+                ))}
+
+                {/* Right-edge label */}
+                {showLabel && (
+                  <text
+                    x={xOf(lastPt.episode) + 10}
+                    y={yOf(lastPt.rank) + 4}
+                    fontSize="10"
+                    fill={isMe ? '#FF6B35' : isHovered ? '#FFD54F' : 'rgba(255,255,255,0.5)'}
+                    fontFamily="-apple-system,sans-serif"
+                    fontWeight={isMe ? '800' : '600'}
+                  >
+                    {m.name}
+                  </text>
+                )}
+              </g>
+            );
+          })
+        )}
+      </svg>
+    </div>
+  );
+}
+
+// ============================================================
 // Component
 // ============================================================
 export default function HomePage() {
@@ -181,6 +397,39 @@ export default function HomePage() {
       };
     }).sort((a, b) => b.total - a.total),
   [totals, managers, myManagerName]);
+
+  // ---- Rank history chart data ----
+  // For each episode, compute each manager's cumulative fantasy rank.
+  // Uses fantasy_points only (the episodic signal) not grand_total,
+  // since pool/NET recalculations would make earlier episodes look wrong.
+  const rankHistory = useMemo(() => {
+    const episodes = Array.from(new Set(managerScores.map(ms => ms.episode))).sort((a, b) => a - b);
+    const history: Record<string, RankPoint[]> = {};
+    managers.forEach(m => { history[m.id] = []; });
+
+    episodes.forEach(ep => {
+      // Cumulative fantasy total for each manager up to and including this episode
+      const cumulative: Record<string, number> = {};
+      managers.forEach(m => {
+        cumulative[m.id] = managerScores
+          .filter(ms => ms.manager_id === m.id && ms.episode <= ep)
+          .reduce((s, ms) => s + (ms.fantasy_points || 0), 0);
+      });
+
+      // Sort descending to assign ranks (ties share the better rank)
+      const sorted = Object.entries(cumulative).sort((a, b) => b[1] - a[1]);
+      let currentRank = 1;
+      sorted.forEach(([managerId, pts], idx) => {
+        // Tie handling: same score = same rank
+        if (idx > 0 && pts < sorted[idx - 1][1]) currentRank = idx + 1;
+        if (history[managerId]) {
+          history[managerId].push({ episode: ep, rank: currentRank });
+        }
+      });
+    });
+
+    return history;
+  }, [managerScores, managers]);
 
   // My pool info
   const myPool = useMemo(() => poolStatuses.find(p => p.manager_id === myManagerId), [poolStatuses, myManagerId]);
@@ -307,6 +556,27 @@ export default function HomePage() {
                 );
               })}
             </div>
+          </div>
+        </div>
+
+        {/* ── 2b. RANKING CHART ── */}
+        <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '16px', marginBottom: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <h2 style={{ margin: 0, fontSize: '13px', fontWeight: 800, color: '#fff' }}>📈 Ranking History</h2>
+            <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', fontWeight: 600 }}>By cumulative fantasy pts · hover a line</span>
+          </div>
+          {/* Y-axis label */}
+          <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.15)', marginBottom: '8px', letterSpacing: '1px', textTransform: 'uppercase', fontWeight: 700 }}>
+            ↑ Better rank
+          </div>
+          <RankTrackingChart
+            rankHistory={rankHistory}
+            managers={managers}
+            myManagerId={myManagerId}
+          />
+          <div style={{ fontSize: '9px', color: 'rgba(255,255,255,0.15)', marginTop: '6px' }}>
+            <span style={{ color: '#FF6B35', fontWeight: 700 }}>— You</span>
+            <span style={{ marginLeft: '12px' }}>— Others (hover to highlight)</span>
           </div>
         </div>
 
