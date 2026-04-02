@@ -278,12 +278,20 @@ export async function POST(request: NextRequest) {
             { onConflict: 'season_id,manager_id' }
           );
         } else {
+          // Cap weeks_survived at (episode - 1) so re-running Calculate
+          // for the same episode never double-counts a survival week.
+          // episode 2 = max 1 week, episode 3 = max 2 weeks, etc.
+          const maxPossibleWeeks = episode - 1;
+          const newWeeks = Math.min(
+            (currentPool?.weeks_survived || 0) + 1,
+            maxPossibleWeeks
+          );
           await supabase.from('pool_status').upsert(
             {
               season_id: seasonId,
               manager_id: pick.manager_id,
               status: 'active',
-              weeks_survived: (currentPool?.weeks_survived || 0) + 1,
+              weeks_survived: newWeeks,
             },
             { onConflict: 'season_id,manager_id' }
           );
