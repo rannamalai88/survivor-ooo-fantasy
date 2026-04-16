@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     // 5. Get weekly picks
     const { data: weeklyPicks } = await supabase
       .from('weekly_picks')
-      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id, pool_backdoor_id')
+      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id, pool_backdoor_id, swap_out_ids, swap_in_ids')
       .eq('season_id', seasonId)
       .eq('episode', episode);
 
@@ -112,6 +112,34 @@ export async function POST(request: NextRequest) {
       if (ps.captain_lost) captainPrivilegeLost.add(ps.manager_id);
     }
 
+    // ----------------------------------------------------------------
+    // 7b. Apply Swap Out (chip 4) — build effectiveTeams.
+    //     For managers who played chip 4, replace their permanent roster
+    //     with (permanent - swap_out_ids + swap_in_ids) for this episode.
+    //     The permanent teams table is never modified.
+    // ----------------------------------------------------------------
+    const effectiveTeams: Record<string, string[]> = {};
+    for (const mgr of managers) {
+      const baseteam = managerTeams[mgr.id] || [];
+      const picks = picksByManager[mgr.id];
+
+      if (
+        picks?.chip_played === 4 &&
+        Array.isArray(picks?.swap_out_ids) && picks.swap_out_ids.length > 0 &&
+        Array.isArray(picks?.swap_in_ids)  && picks.swap_in_ids.length > 0 &&
+        picks.swap_out_ids.length === picks.swap_in_ids.length
+      ) {
+        const swapOuts = picks.swap_out_ids as string[];
+        const swapIns  = picks.swap_in_ids  as string[];
+        effectiveTeams[mgr.id] = [
+          ...baseteam.filter(id => !swapOuts.includes(id)),
+          ...swapIns,
+        ];
+      } else {
+        effectiveTeams[mgr.id] = baseteam;
+      }
+    }
+
     // 7. NET answer
     const { data: netAnswer } = await supabase
       .from('net_answers')
@@ -128,7 +156,7 @@ export async function POST(request: NextRequest) {
     // ----------------------------------------------------------------
     const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
-      const team = managerTeams[mgr.id] || [];
+      const team = effectiveTeams[mgr.id] || [];
       const picks = picksByManager[mgr.id];
       const hasCap = !captainPrivilegeLost.has(mgr.id);
 
@@ -150,7 +178,7 @@ export async function POST(request: NextRequest) {
     const resultRows: any[] = [];
 
     for (const mgr of managers) {
-      const team = managerTeams[mgr.id] || [];
+      const team = effectiveTeams[mgr.id] || [];
       const picks = picksByManager[mgr.id];
       const hasCap = !captainPrivilegeLost.has(mgr.id);
 

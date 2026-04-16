@@ -8,7 +8,19 @@ import { TRIBE_COLORS, CHIPS } from '@/lib/constants';
 
 interface Survivor { id: string; name: string; tribe: string; is_active: boolean; photo_url: string | null; cast_id: number; }
 interface TeamMember extends Survivor { is_team_active: boolean; }
-interface ExistingPick { id: string; captain_id: string | null; pool_pick_id: string | null; pool_backdoor_id: string | null; net_pick_id: string | null; chip_played: number | null; chip_target: string | null; submitted_at: string | null; is_locked: boolean; }
+interface ExistingPick {
+  id: string;
+  captain_id: string | null;
+  pool_pick_id: string | null;
+  pool_backdoor_id: string | null;
+  net_pick_id: string | null;
+  chip_played: number | null;
+  chip_target: string | null;
+  swap_out_ids: string[] | null;
+  swap_in_ids: string[] | null;
+  submitted_at: string | null;
+  is_locked: boolean;
+}
 
 const TC: Record<string, string> = TRIBE_COLORS;
 
@@ -69,6 +81,170 @@ const TribeFilter = ({ value, onChange, tribes }: { value: string; onChange: (v:
   </div>
 );
 
+// ============================================================
+// Swap Out Panel — shown when chip 4 is selected
+// ============================================================
+function SwapOutPanel({
+  activeTeam,
+  allActiveSurvivors,
+  swapOuts,
+  swapIns,
+  onToggleSwapOut,
+  onSelectSwapIn,
+  onRemoveSwapIn,
+  isLocked,
+  tribes,
+}: {
+  activeTeam: TeamMember[];
+  allActiveSurvivors: Survivor[];
+  swapOuts: string[];
+  swapIns: string[];
+  onToggleSwapOut: (id: string) => void;
+  onSelectSwapIn: (id: string) => void;
+  onRemoveSwapIn: (index: number) => void;
+  isLocked: boolean;
+  tribes: string[];
+}) {
+  const [swapFilter, setSwapFilter] = useState('All');
+
+  // Resulting team = team members not swapped out + swapped in survivors
+  const keepingIds = activeTeam.filter(m => !swapOuts.includes(m.id)).map(m => m.id);
+  const resultingTeamIds = [...keepingIds, ...swapIns];
+
+  // Survivors available to swap in = all active, not already in resulting team
+  const availableForSwapIn = allActiveSurvivors.filter(s => !resultingTeamIds.includes(s.id));
+  const filteredAvailable = swapFilter === 'All' ? availableForSwapIn : availableForSwapIn.filter(s => s.tribe === swapFilter);
+
+  const slotsOpen = swapOuts.length - swapIns.length; // how many swap-ins still needed
+
+  return (
+    <div style={{ marginTop: '12px', background: 'rgba(52,152,219,0.04)', border: '1px solid rgba(52,152,219,0.2)', borderRadius: '12px', padding: '16px' }}>
+
+      {/* ── YOUR TEAM ── */}
+      <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
+        Your team — click to swap out
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
+        {activeTeam.length === 0 && (
+          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '12px', textAlign: 'center' }}>No active survivors on your team</div>
+        )}
+        {activeTeam.map(member => {
+          const isOut = swapOuts.includes(member.id);
+          return (
+            <div key={member.id} onClick={() => !isLocked && onToggleSwapOut(member.id)}
+              style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', transition: 'all 0.2s', background: isOut ? 'rgba(231,76,60,0.1)' : 'rgba(26,188,156,0.05)', border: isOut ? '1px solid rgba(231,76,60,0.35)' : '1px solid rgba(26,188,156,0.2)' }}>
+              <Av name={member.name} tribe={member.tribe} photoUrl={member.photo_url} sz={28} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: isOut ? 'rgba(255,255,255,0.4)' : '#fff', textDecoration: isOut ? 'line-through' : 'none' }}>{member.name}</div>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: TC[member.tribe], letterSpacing: '1px' }}>{member.tribe.toUpperCase()}</div>
+              </div>
+              <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px', background: isOut ? 'rgba(231,76,60,0.15)' : 'rgba(26,188,156,0.12)', color: isOut ? '#E74C3C' : '#1ABC9C' }}>
+                {isOut ? '🔄 OUT' : '✓ KEEPING'}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── SWAP PAIRS ── */}
+      {swapOuts.length > 0 && (
+        <>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
+            Swap pairs ({swapOuts.length} out · {swapIns.length} in)
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
+            {swapOuts.map((outId, i) => {
+              const outMember = activeTeam.find(m => m.id === outId);
+              const inId = swapIns[i];
+              const inSurvivor = inId ? allActiveSurvivors.find(s => s.id === inId) : null;
+              return (
+                <div key={outId} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px' }}>
+                  {/* Out */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                    {outMember && <Av name={outMember.name} tribe={outMember.tribe} photoUrl={outMember.photo_url} sz={22} />}
+                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', textDecoration: 'line-through' }}>{outMember?.name || '?'}</span>
+                  </div>
+                  {/* Arrow */}
+                  <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.2)' }}>→</span>
+                  {/* In */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                    {inSurvivor ? (
+                      <>
+                        <Av name={inSurvivor.name} tribe={inSurvivor.tribe} photoUrl={inSurvivor.photo_url} sz={22} />
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>{inSurvivor.name}</span>
+                        {!isLocked && (
+                          <button onClick={() => onRemoveSwapIn(i)}
+                            style={{ marginLeft: 'auto', fontSize: '10px', color: 'rgba(255,255,255,0.3)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>
+                            ✕
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ fontSize: '11px', color: 'rgba(255,107,53,0.6)', fontStyle: 'italic' }}>pick below ↓</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* ── AVAILABLE SURVIVORS ── */}
+      {swapOuts.length > 0 && slotsOpen > 0 && (
+        <>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
+            Swap in — select {slotsOpen} survivor{slotsOpen > 1 ? 's' : ''}
+          </div>
+          <TribeFilter value={swapFilter} onChange={setSwapFilter} tribes={tribes} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '260px', overflowY: 'auto', padding: '2px' }}>
+            {filteredAvailable.length === 0 ? (
+              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center', gridColumn: '1/-1' }}>No survivors available with this filter</div>
+            ) : filteredAvailable.map(s => (
+              <SurvivorOption key={s.id} s={s} selected={swapIns.includes(s.id)} onClick={() => !isLocked && onSelectSwapIn(s.id)} disabled={isLocked} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── RESULTING TEAM PREVIEW ── */}
+      {swapOuts.length > 0 && swapIns.length === swapOuts.length && (
+        <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(52,152,219,0.06)', border: '1px solid rgba(52,152,219,0.2)', borderRadius: '8px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(52,152,219,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
+            ✓ Your team this episode
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {resultingTeamIds.map(id => {
+              const s = allActiveSurvivors.find(x => x.id === id);
+              const isSwappedIn = swapIns.includes(id);
+              if (!s) return null;
+              return (
+                <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 8px', borderRadius: '6px', background: isSwappedIn ? 'rgba(52,152,219,0.15)' : 'rgba(255,255,255,0.04)', border: isSwappedIn ? '1px solid rgba(52,152,219,0.3)' : '1px solid rgba(255,255,255,0.06)' }}>
+                  <Av name={s.name} tribe={s.tribe} photoUrl={s.photo_url} sz={18} />
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: isSwappedIn ? '#3498DB' : 'rgba(255,255,255,0.6)' }}>{s.name}</span>
+                  {isSwappedIn && <span style={{ fontSize: '8px', color: '#3498DB' }}>NEW</span>}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', marginTop: '8px', lineHeight: 1.4 }}>
+            This team scores for this episode only. Your permanent roster resumes next episode.
+          </div>
+        </div>
+      )}
+
+      {swapOuts.length === 0 && (
+        <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
+          Click a team member above to mark them for swapping
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Main Component
+// ============================================================
 function PicksContent() {
   const { manager, managers } = useAuth();
 
@@ -83,12 +259,18 @@ function PicksContent() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  // Pick state
   const [captain, setCaptain] = useState<string | null>(null);
   const [poolPick, setPoolPick] = useState<string | null>(null);
   const [backdoorPick, setBackdoorPick] = useState<string | null>(null);
   const [netPick, setNetPick] = useState<string | null>(null);
   const [chipPlay, setChipPlay] = useState<number | null>(null);
   const [chipTarget, setChipTarget] = useState<string | null>(null);
+
+  // Swap Out state (chip 4)
+  const [swapOuts, setSwapOuts] = useState<string[]>([]);
+  const [swapIns, setSwapIns] = useState<string[]>([]);
+
   const [poolFilter, setPoolFilter] = useState('All');
   const [netFilter, setNetFilter] = useState('All');
   const [timeLeft, setTimeLeft] = useState('');
@@ -114,7 +296,17 @@ function PicksContent() {
       if (teamData) setMyTeam(teamData.map((t: any) => ({ ...t.survivors, is_team_active: t.is_active })));
 
       const { data: pickData } = await supabase.from('weekly_picks').select('*').eq('season_id', sid).eq('manager_id', manager.id).eq('episode', ep).maybeSingle();
-      if (pickData) { setExistingPick(pickData); setCaptain(pickData.captain_id); setPoolPick(pickData.pool_pick_id); setBackdoorPick(pickData.pool_backdoor_id); setNetPick(pickData.net_pick_id); setChipPlay(pickData.chip_played); setChipTarget(pickData.chip_target); }
+      if (pickData) {
+        setExistingPick(pickData);
+        setCaptain(pickData.captain_id);
+        setPoolPick(pickData.pool_pick_id);
+        setBackdoorPick(pickData.pool_backdoor_id);
+        setNetPick(pickData.net_pick_id);
+        setChipPlay(pickData.chip_played);
+        setChipTarget(pickData.chip_target);
+        setSwapOuts(pickData.swap_out_ids || []);
+        setSwapIns(pickData.swap_in_ids || []);
+      }
 
       const { data: poolData } = await supabase.from('pool_status').select('*').eq('season_id', sid).eq('manager_id', manager.id).maybeSingle();
       if (poolData) setPoolStatus(poolData.status || 'active');
@@ -123,17 +315,9 @@ function PicksContent() {
       if (prevPicks) setUsedPoolPicks(prevPicks.map((p: any) => p.pool_pick_id).filter(Boolean));
 
       const { data: chipsData } = await supabase.from('chips_used').select('chip_id, episode').eq('season_id', sid).eq('manager_id', manager.id);
-      // Only chips used in PREVIOUS episodes count as "used" — current episode chip stays editable
       if (chipsData) setUsedChips(chipsData.filter((c: any) => c.episode < ep).map((c: any) => c.chip_id));
 
-      // Check if captain privilege has been permanently lost (any prior episode where captain was voted out)
-      const { data: captainLostData } = await supabase
-        .from('manager_scores')
-        .select('captain_lost')
-        .eq('season_id', sid)
-        .eq('manager_id', manager.id)
-        .eq('captain_lost', true)
-        .limit(1);
+      const { data: captainLostData } = await supabase.from('manager_scores').select('captain_lost').eq('season_id', sid).eq('manager_id', manager.id).eq('captain_lost', true).limit(1);
       setCaptainPrivilegeLost((captainLostData || []).length > 0);
     } catch (err) { console.error('Error loading picks:', err); }
     setLoading(false);
@@ -159,27 +343,88 @@ function PicksContent() {
     tick(); const iv = setInterval(tick, 60000); return () => clearInterval(iv);
   }, [season]);
 
+  // If captain is being swapped out, clear captain selection
+  useEffect(() => {
+    if (chipPlay === 4 && captain && swapOuts.includes(captain)) {
+      setCaptain(null);
+    }
+  }, [swapOuts, chipPlay]);
+
   const currentEp = season?.current_episode || 1;
   const currentWeek = currentEp;
   const tribes = useMemo(() => [...new Set(allSurvivors.map(s => s.tribe))].sort(), [allSurvivors]);
   const activeSurvivors = allSurvivors.filter(s => s.is_active);
   const activeTeam = myTeam.filter(s => s.is_active);
+
+  // When chip 4 is active, captain options = resulting team (keeping + swapped in)
+  const captainOptions = useMemo(() => {
+    if (chipPlay !== 4) return activeTeam;
+    const keeping = activeTeam.filter(m => !swapOuts.includes(m.id));
+    const swappedIn = swapIns
+      .map(id => allSurvivors.find(s => s.id === id))
+      .filter((s): s is Survivor => !!s)
+      .map(s => ({ ...s, is_team_active: true } as TeamMember));
+    return [...keeping, ...swappedIn];
+  }, [chipPlay, activeTeam, swapOuts, swapIns, allSurvivors]);
+
   const poolSurvivors = activeSurvivors.filter(s => !usedPoolPicks.includes(s.id));
   const filteredPool = poolFilter === 'All' ? poolSurvivors : poolSurvivors.filter(s => s.tribe === poolFilter);
   const filteredNet = netFilter === 'All' ? activeSurvivors : activeSurvivors.filter(s => s.tribe === netFilter);
   const availableChips = CHIPS.filter(c => { if (usedChips.includes(c.id)) return false; const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number); return currentWeek >= lo && currentWeek <= hi; });
   const activeChipWindow = availableChips.length > 0;
-  const picksComplete = (captainPrivilegeLost || captain !== null) && (poolStatus !== 'active' || poolPick !== null) && netPick !== null;
+
+  // Swap is valid if: chip 4 not played, OR at least 1 swap and all pairs are complete
+  const swapValid = chipPlay !== 4 || (swapOuts.length > 0 && swapOuts.length === swapIns.length);
+  const picksComplete = (captainPrivilegeLost || captain !== null) &&
+    (poolStatus !== 'active' || poolPick !== null) &&
+    netPick !== null &&
+    swapValid;
   const isLocked = existingPick?.is_locked || isPastDeadline;
+
+  // Swap handlers
+  function handleToggleSwapOut(survivorId: string) {
+    if (swapOuts.includes(survivorId)) {
+      const idx = swapOuts.indexOf(survivorId);
+      setSwapOuts(prev => prev.filter(id => id !== survivorId));
+      setSwapIns(prev => prev.filter((_, i) => i !== idx));
+    } else {
+      setSwapOuts(prev => [...prev, survivorId]);
+    }
+  }
+
+  function handleSelectSwapIn(survivorId: string) {
+    if (swapIns.includes(survivorId)) {
+      setSwapIns(prev => prev.filter(id => id !== survivorId));
+    } else if (swapIns.length < swapOuts.length) {
+      setSwapIns(prev => [...prev, survivorId]);
+    }
+  }
+
+  function handleRemoveSwapIn(index: number) {
+    setSwapIns(prev => prev.filter((_, i) => i !== index));
+  }
 
   async function savePicks() {
     if (!manager || !season || isLocked) return;
     setSaving(true); setSaveMessage(null);
-    const row = { season_id: season.id, manager_id: manager.id, episode: currentEp, captain_id: captain, pool_pick_id: poolStatus === 'active' ? poolPick : null, pool_backdoor_id: poolStatus === 'drowned' ? backdoorPick : null, net_pick_id: netPick, chip_played: chipPlay, chip_target: chipTarget, submitted_at: new Date().toISOString(), is_locked: false };
+    const row = {
+      season_id: season.id,
+      manager_id: manager.id,
+      episode: currentEp,
+      captain_id: captain,
+      pool_pick_id: poolStatus === 'active' ? poolPick : null,
+      pool_backdoor_id: poolStatus === 'drowned' ? backdoorPick : null,
+      net_pick_id: netPick,
+      chip_played: chipPlay,
+      chip_target: chipTarget,
+      swap_out_ids: chipPlay === 4 ? swapOuts : [],
+      swap_in_ids: chipPlay === 4 ? swapIns : [],
+      submitted_at: new Date().toISOString(),
+      is_locked: false,
+    };
     try {
       if (existingPick) { const { error } = await supabase.from('weekly_picks').update(row).eq('id', existingPick.id); if (error) throw error; }
       else { const { error } = await supabase.from('weekly_picks').insert(row); if (error) throw error; }
-      // Always delete then re-insert so chip choice stays editable until locked
       await supabase.from('chips_used').delete().eq('season_id', season.id).eq('manager_id', manager.id).eq('episode', currentEp);
       if (chipPlay) { await supabase.from('chips_used').insert({ season_id: season.id, manager_id: manager.id, chip_id: chipPlay, episode: currentEp, target: chipTarget }); }
       setSaveMessage('Picks submitted! You can update them until the deadline.');
@@ -190,7 +435,7 @@ function PicksContent() {
 
   const deadlineStr = useMemo(() => {
     const now = new Date(); const d = (3 - now.getDay() + 7) % 7; const w = new Date(now); w.setDate(now.getDate() + (d === 0 ? 0 : d));
-    return `${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][w.getDay()]}, ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][w.getMonth()]} ${w.getDate()} · 7:00 PM CT`;
+    return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][w.getDay()]}, ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][w.getMonth()]} ${w.getDate()} · 7:00 PM CT`;
   }, []);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-white/30 text-sm tracking-wider uppercase">Loading picks...</div></div>;
@@ -199,6 +444,8 @@ function PicksContent() {
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8e8', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       <div style={{ maxWidth: '540px', margin: '0 auto', padding: '20px 16px 100px' }}>
+
+        {/* Header */}
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
             <Flame />
@@ -216,27 +463,36 @@ function PicksContent() {
         {saveMessage && <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '14px', fontSize: '13px', background: saveMessage.startsWith('Error') ? 'rgba(255,80,80,0.08)' : 'rgba(26,188,156,0.08)', border: saveMessage.startsWith('Error') ? '1px solid rgba(255,80,80,0.2)' : '1px solid rgba(26,188,156,0.2)', color: saveMessage.startsWith('Error') ? '#FF5050' : '#1ABC9C' }}>{saveMessage}</div>}
         {existingPick && !saveMessage && <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '12px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', color: 'rgba(26,188,156,0.7)' }}>✅ Picks submitted — you can update until the deadline</div>}
 
-        <Section title="Captain Designation" icon="👑" badge={captainPrivilegeLost ? "PRIVILEGE LOST" : "REQUIRED"} badgeColor={captainPrivilegeLost ? "#95a5a6" : "#FFD54F"}>
+        {/* ── CAPTAIN ── */}
+        <Section
+          title="Captain Designation" icon="👑"
+          badge={captainPrivilegeLost ? 'PRIVILEGE LOST' : captain ? 'SELECTED' : 'REQUIRED'}
+          badgeColor={captainPrivilegeLost ? '#95a5a6' : captain ? '#1ABC9C' : '#FFD54F'}>
           {captainPrivilegeLost ? (
             <div style={{ padding: '14px 16px', background: 'rgba(149,165,166,0.06)', border: '1px solid rgba(149,165,166,0.15)', borderRadius: '10px', textAlign: 'center' }}>
               <div style={{ fontSize: '22px', marginBottom: '6px' }}>💀</div>
               <div style={{ fontSize: '13px', fontWeight: 700, color: 'rgba(255,255,255,0.4)' }}>Captain Privilege Lost</div>
-              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)', marginTop: '4px', lineHeight: 1.5 }}>
-                Your designated captain was voted out. The 2x multiplier no longer applies.
-              </div>
+              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)', marginTop: '4px', lineHeight: 1.5 }}>Your designated captain was voted out. The 2x multiplier no longer applies.</div>
             </div>
           ) : (
             <>
-              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.</p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>
+                Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.
+                {chipPlay === 4 && swapOuts.length > 0 && <span style={{ color: 'rgba(52,152,219,0.7)' }}> Showing your swapped team.</span>}
+              </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {activeTeam.length === 0 ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center' }}>No active survivors on your team</div> :
-                activeTeam.map(s => <SurvivorOption key={s.id} s={s} selected={captain === s.id} onClick={() => !isLocked && setCaptain(s.id)} disabled={isLocked} />)}
+                {captainOptions.length === 0
+                  ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center' }}>No active survivors on your team</div>
+                  : captainOptions.map(s => <SurvivorOption key={s.id} s={s} selected={captain === s.id} onClick={() => !isLocked && setCaptain(s.id)} disabled={isLocked} />)}
               </div>
             </>
           )}
         </Section>
 
-        <Section title="Survivor Pool" icon="🌊" badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : 'BURNT'} badgeColor={poolStatus === 'active' ? '#1ABC9C' : poolStatus === 'drowned' ? '#FF6B35' : '#FF5050'}>
+        {/* ── POOL ── */}
+        <Section title="Survivor Pool" icon="🌊"
+          badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : 'BURNT'}
+          badgeColor={poolStatus === 'active' ? '#1ABC9C' : poolStatus === 'drowned' ? '#FF6B35' : '#FF5050'}>
           {poolStatus === 'active' ? (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>Pick one survivor you think <b style={{ color: 'rgba(255,255,255,0.5)' }}>will NOT be eliminated</b>. No reusing previous picks.</p>
             <TribeFilter value={poolFilter} onChange={setPoolFilter} tribes={tribes} />
@@ -252,6 +508,7 @@ function PicksContent() {
           </>) : <p style={{ fontSize: '12px', color: 'rgba(255,80,80,0.5)', margin: 0 }}>You have been <b>Burnt</b> — no more pool picks this season.</p>}
         </Section>
 
+        {/* ── NET ── */}
         <Section title="Name Episode Title (NET)" icon="💬" badge="REQUIRED" badgeColor="#1ABC9C">
           {season?.next_episode_title ? (
             <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', borderRadius: '8px' }}>
@@ -266,31 +523,70 @@ function PicksContent() {
           </div>
         </Section>
 
-        <Section title="Game Chips" icon="🎰" badge={activeChipWindow ? 'AVAILABLE' : 'NO CHIP THIS WEEK'} badgeColor={activeChipWindow ? '#FFD54F' : 'rgba(255,255,255,0.25)'}>
+        {/* ── CHIPS ── */}
+        <Section title="Game Chips" icon="🎰"
+          badge={activeChipWindow ? 'AVAILABLE' : 'NO CHIP THIS WEEK'}
+          badgeColor={activeChipWindow ? '#FFD54F' : 'rgba(255,255,255,0.25)'}>
           {activeChipWindow ? (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 14px', lineHeight: 1.5 }}>Optional chip play.</p>
             {availableChips.map(c => (
-              <div key={c.id} onClick={() => { if (isLocked) return; setChipPlay(chipPlay === c.id ? null : c.id); setChipTarget(null); }}
+              <div key={c.id} onClick={() => {
+                if (isLocked) return;
+                const next = chipPlay === c.id ? null : c.id;
+                setChipPlay(next);
+                setChipTarget(null);
+                // Clear swap state when deselecting chip 4
+                if (next !== 4) { setSwapOuts([]); setSwapIns([]); }
+              }}
                 style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', background: chipPlay === c.id ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.02)', border: chipPlay === c.id ? '1px solid rgba(255,215,0,0.25)' : '1px solid rgba(255,255,255,0.04)', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', marginBottom: '6px' }}>
                 <span style={{ fontSize: '24px' }}>{c.icon}</span>
-                <div style={{ flex: 1 }}><div style={{ fontSize: '14px', fontWeight: 700, color: chipPlay === c.id ? '#FFD54F' : '#fff' }}>{c.name}</div><div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{c.desc}</div></div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 700, color: chipPlay === c.id ? '#FFD54F' : '#fff' }}>{c.name}</div>
+                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{c.desc}</div>
+                </div>
                 <div style={{ width: '20px', height: '20px', borderRadius: '50%', border: chipPlay === c.id ? '2px solid #FFD54F' : '2px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', background: chipPlay === c.id ? '#FFD54F' : 'transparent' }}>
                   {chipPlay === c.id && <span style={{ fontSize: '12px', color: '#0a0a0f', fontWeight: 800 }}>✓</span>}
                 </div>
               </div>
             ))}
+
+            {/* Assistant Manager target picker */}
             {chipPlay === 1 && (
               <div style={{ background: 'rgba(255,215,0,0.04)', border: '1px solid rgba(255,215,0,0.15)', borderRadius: '10px', padding: '14px', marginTop: '8px' }}>
                 <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', margin: '0 0 10px' }}>Select which manager&apos;s team to copy:</p>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: '6px' }}>
                   {managers.filter(m => m.id !== manager?.id).map(m => (
-                    <div key={m.id} onClick={() => !isLocked && setChipTarget(m.name)} style={{ padding: '10px', textAlign: 'center', borderRadius: '8px', cursor: isLocked ? 'default' : 'pointer', background: chipTarget === m.name ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.02)', border: chipTarget === m.name ? '1px solid rgba(255,215,0,0.3)' : '1px solid rgba(255,255,255,0.04)' }}>
+                    <div key={m.id} onClick={() => !isLocked && setChipTarget(m.name)}
+                      style={{ padding: '10px', textAlign: 'center', borderRadius: '8px', cursor: isLocked ? 'default' : 'pointer', background: chipTarget === m.name ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.02)', border: chipTarget === m.name ? '1px solid rgba(255,215,0,0.3)' : '1px solid rgba(255,255,255,0.04)' }}>
                       <div style={{ fontSize: '13px', fontWeight: chipTarget === m.name ? 700 : 500, color: chipTarget === m.name ? '#FFD54F' : 'rgba(255,255,255,0.5)' }}>{m.name}</div>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+
+            {/* Swap Out panel */}
+            {chipPlay === 4 && (
+              <SwapOutPanel
+                activeTeam={activeTeam}
+                allActiveSurvivors={activeSurvivors}
+                swapOuts={swapOuts}
+                swapIns={swapIns}
+                onToggleSwapOut={handleToggleSwapOut}
+                onSelectSwapIn={handleSelectSwapIn}
+                onRemoveSwapIn={handleRemoveSwapIn}
+                isLocked={isLocked}
+                tribes={tribes}
+              />
+            )}
+
+            {/* Swap Out validation hint */}
+            {chipPlay === 4 && swapOuts.length > 0 && swapOuts.length > swapIns.length && (
+              <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,107,53,0.6)', textAlign: 'center' }}>
+                ⚠ Select {swapOuts.length - swapIns.length} more survivor{swapOuts.length - swapIns.length > 1 ? 's' : ''} to swap in
+              </div>
+            )}
+
           </>) : (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', margin: '0 0 10px' }}>No chip available this week.</p>
             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -301,6 +597,7 @@ function PicksContent() {
           </>)}
         </Section>
 
+        {/* ── SUBMIT ── */}
         <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(transparent,#0a0a0f 20%)', padding: '20px 0 10px', marginTop: '8px' }}>
           <button onClick={() => { if (picksComplete && !isLocked) savePicks(); }} disabled={!picksComplete || isLocked || saving}
             style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', cursor: picksComplete && !isLocked && !saving ? 'pointer' : 'default', fontWeight: 800, fontSize: '15px', letterSpacing: '1.5px', background: isLocked ? 'rgba(255,80,80,0.08)' : picksComplete ? 'linear-gradient(135deg,#FF6B35,#FF8F00)' : 'rgba(255,255,255,0.04)', color: isLocked ? 'rgba(255,80,80,0.5)' : picksComplete ? '#fff' : 'rgba(255,255,255,0.15)', boxShadow: picksComplete && !isLocked ? '0 4px 20px rgba(255,107,53,0.3)' : 'none', opacity: saving ? 0.6 : 1 }}>
@@ -311,6 +608,7 @@ function PicksContent() {
               {!captain && !captainPrivilegeLost && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Captain</span>}
               {poolStatus === 'active' && !poolPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Pool</span>}
               {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ NET</span>}
+              {chipPlay === 4 && !swapValid && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Complete your swap</span>}
             </div>
           )}
         </div>
