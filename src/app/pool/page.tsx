@@ -11,12 +11,12 @@ interface ManagerTotalRow { manager_id: string; pool_score: number; }
 interface SurvivorInfo { id: string; name: string; tribe: string; is_active: boolean; eliminated_episode: number | null; }
 
 function isPicksLocked(): boolean {
+  // Picks lock on Wednesday at 7pm CT only.
+  // Thursday–Tuesday = new episode's pick window is open → not locked.
   const now = new Date();
   const ctNow = new Date(now.getTime() - 5 * 60 * 60 * 1000);
   const day = ctNow.getUTCDay(), hour = ctNow.getUTCHours(), min = ctNow.getUTCMinutes();
-  if (day > 3) return true;
-  if (day === 3 && (hour > 19 || (hour === 19 && min >= 0))) return true;
-  return false;
+  return day === 3 && (hour > 19 || (hour === 19 && min >= 0));
 }
 
 export default function PoolBoardPage() {
