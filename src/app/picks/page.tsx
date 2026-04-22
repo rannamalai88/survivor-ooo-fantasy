@@ -111,8 +111,11 @@ function SwapOutPanel({
   const keepingIds = activeTeam.filter(m => !swapOuts.includes(m.id)).map(m => m.id);
   const resultingTeamIds = [...keepingIds, ...swapIns];
 
-  // Survivors available to swap in = all active, not already in resulting team
-  const availableForSwapIn = allActiveSurvivors.filter(s => !resultingTeamIds.includes(s.id));
+  // Survivors available to swap in = all active survivors,
+  // excluding only those already selected as swap-ins (prevents picking
+  // the same survivor twice in the swap-in list).
+  // Survivors on the permanent team CAN be selected again (e.g. to double up).
+  const availableForSwapIn = allActiveSurvivors.filter(s => !swapIns.includes(s.id));
   const filteredAvailable = swapFilter === 'All' ? availableForSwapIn : availableForSwapIn.filter(s => s.tribe === swapFilter);
 
   const slotsOpen = swapOuts.length - swapIns.length; // how many swap-ins still needed
