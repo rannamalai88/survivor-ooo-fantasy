@@ -356,15 +356,21 @@ function PicksContent() {
   const activeSurvivors = allSurvivors.filter(s => s.is_active);
   const activeTeam = myTeam.filter(s => s.is_active);
 
-  // When chip 4 is active, captain options = resulting team (keeping + swapped in)
+  // When chip 4 is active, captain options = resulting team (keeping + swapped in),
+  // deduplicated by ID. Same survivor multiple times (e.g. all-Rick team) only
+  // needs one captain designation — they all share the same ID anyway.
   const captainOptions = useMemo(() => {
-    if (chipPlay !== 4) return activeTeam;
-    const keeping = activeTeam.filter(m => !swapOuts.includes(m.id));
-    const swappedIn = swapIns
-      .map(id => allSurvivors.find(s => s.id === id))
-      .filter((s): s is Survivor => !!s)
-      .map(s => ({ ...s, is_team_active: true } as TeamMember));
-    return [...keeping, ...swappedIn];
+    const base = chipPlay !== 4 ? activeTeam : (() => {
+      const keeping = activeTeam.filter(m => !swapOuts.includes(m.id));
+      const swappedIn = swapIns
+        .map(id => allSurvivors.find(s => s.id === id))
+        .filter((s): s is Survivor => !!s)
+        .map(s => ({ ...s, is_team_active: true } as TeamMember));
+      return [...keeping, ...swappedIn];
+    })();
+    // Deduplicate by ID
+    const seen = new Set<string>();
+    return base.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
   }, [chipPlay, activeTeam, swapOuts, swapIns, allSurvivors]);
 
   const poolSurvivors = activeSurvivors.filter(s => !usedPoolPicks.includes(s.id));
