@@ -111,11 +111,8 @@ function SwapOutPanel({
   const keepingIds = activeTeam.filter(m => !swapOuts.includes(m.id)).map(m => m.id);
   const resultingTeamIds = [...keepingIds, ...swapIns];
 
-  // Survivors available to swap in = all active survivors,
-  // excluding only those already selected as swap-ins (prevents picking
-  // the same survivor twice in the swap-in list).
-  // Survivors on the permanent team CAN be selected again (e.g. to double up).
-  const availableForSwapIn = allActiveSurvivors.filter(s => !swapIns.includes(s.id));
+  // Any active survivor can be swapped in, including duplicates.
+  const availableForSwapIn = allActiveSurvivors;
   const filteredAvailable = swapFilter === 'All' ? availableForSwapIn : availableForSwapIn.filter(s => s.tribe === swapFilter);
 
   const slotsOpen = swapOuts.length - swapIns.length; // how many swap-ins still needed
@@ -396,9 +393,9 @@ function PicksContent() {
   }
 
   function handleSelectSwapIn(survivorId: string) {
-    if (swapIns.includes(survivorId)) {
-      setSwapIns(prev => prev.filter(id => id !== survivorId));
-    } else if (swapIns.length < swapOuts.length) {
+    // Always append — duplicates are allowed (e.g. all-Rick team).
+    // Only block if we already have enough swap-ins to fill all open slots.
+    if (swapIns.length < swapOuts.length) {
       setSwapIns(prev => [...prev, survivorId]);
     }
   }
