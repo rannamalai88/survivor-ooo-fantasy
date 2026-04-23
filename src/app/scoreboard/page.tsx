@@ -81,7 +81,7 @@ const CHIP_NAMES: Record<number, string> = {
 // ============================================================
 export default function ScoreboardPage() {
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'survivors' | 'managers'>('survivors');
+  const [view, setView] = useState<'survivors' | 'managers'>('managers');
   const [tribeFilter, setTribeFilter] = useState('All');
   const [sortBy, setSortBy] = useState<'total' | 'name'>('total');
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set());
@@ -257,7 +257,7 @@ export default function ScoreboardPage() {
           <p className="text-white/25 text-xs mt-1">Season 50 · Through Episode {currentEpisode - 1}</p>
         </div>
         <div className="flex gap-1 bg-white/5 rounded-lg p-1">
-          {(['survivors', 'managers'] as const).map(v => (
+          {(['managers', 'survivors'] as const).map(v => (
             <button key={v} onClick={() => setView(v)}
               className="px-4 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer border-none capitalize"
               style={{ background: view === v ? 'rgba(255,107,53,0.15)' : 'transparent', color: view === v ? '#FF6B35' : 'rgba(255,255,255,0.35)' }}>
