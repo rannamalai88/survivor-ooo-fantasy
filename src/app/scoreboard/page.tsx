@@ -47,6 +47,8 @@ interface WeeklyPickRow {
   episode: number;
   captain_id: string | null;
   chip_played: number | null;
+  swap_out_ids: string[] | null;
+  swap_in_ids: string[] | null;
 }
 
 interface TeamRow {
@@ -105,7 +107,7 @@ export default function ScoreboardPage() {
         supabase.from('survivor_scores').select('survivor_id, episode, final_points').eq('season_id', SEASON_ID).order('episode'),
         supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
         supabase.from('manager_scores').select('manager_id, episode, fantasy_points, base_team_points, captain_bonus, chip_bonus, voted_out_bonus, net_correct, chip_played, chip_detail, captain_lost').eq('season_id', SEASON_ID).order('episode'),
-        supabase.from('weekly_picks').select('manager_id, episode, captain_id, chip_played').eq('season_id', SEASON_ID).order('episode', { ascending: false }),
+        supabase.from('weekly_picks').select('manager_id, episode, captain_id, chip_played, swap_out_ids, swap_in_ids').eq('season_id', SEASON_ID).order('episode', { ascending: false }),
         // Fetch ALL team members (active + inactive) so voted-out survivors still show
         supabase.from('teams').select('manager_id, survivor_id').eq('season_id', SEASON_ID),
       ]);
@@ -186,6 +188,7 @@ export default function ScoreboardPage() {
         votedOut: number; chip: number; chipPlayed: number | null;
         chipDetail: string | null; netCorrect: boolean; captainLost: boolean;
         captainId: string | null;
+        swapOutIds: string[]; swapInIds: string[];
       }> = {};
       let grandTotal = 0;
 
@@ -202,6 +205,8 @@ export default function ScoreboardPage() {
           netCorrect: ms.net_correct       || false,
           captainLost:ms.captain_lost      || false,
           captainId:  pick?.captain_id     || null,
+          swapOutIds: pick?.swap_out_ids   || [],
+          swapInIds:  pick?.swap_in_ids    || [],
         };
         grandTotal += ms.fantasy_points || 0;
       });
@@ -517,13 +522,26 @@ export default function ScoreboardPage() {
                                   const epCaptainId = d.captainId;
                                   const epCaptain = epCaptainId ? survivorMap.get(epCaptainId) : null;
 
-                                  // Get team survivors + their scores for this episode
-                                  const teamWithScores = m.myTeam.map(s => {
-                                    const score = survivorScores.find(ss => ss.survivor_id === s.id && ss.episode === ep);
+                                  // Build effective team for this episode.
+                                  // If chip 4 (Swap Out) was played, substitute swapped survivors.
+                                  const isSwapEp = d.chipPlayed === 4 && d.swapOutIds.length > 0 && d.swapInIds.length > 0;
+                                  const effectiveTeamIds: string[] = isSwapEp
+                                    ? [
+                                        ...m.myTeam.filter(s => !d.swapOutIds.includes(s.id)).map(s => s.id),
+                                        ...d.swapInIds,
+                                      ]
+                                    : m.myTeam.map(s => s.id);
+
+                                  // Build display rows — duplicates (e.g. all-Rick) get separate rows
+                                  const teamWithScores = effectiveTeamIds.map((sid, idx) => {
+                                    const s = survivorMap.get(sid);
+                                    if (!s) return null;
+                                    const score = survivorScores.find(ss => ss.survivor_id === sid && ss.episode === ep);
                                     const isVotedOut = s.eliminated_episode === ep;
-                                    const isCaptain = s.id === epCaptainId;
-                                    return { ...s, epPts: score?.final_points || 0, isVotedOut, isCaptain };
-                                  }).sort((a, b) => b.epPts - a.epPts);
+                                    const isCaptain = sid === epCaptainId;
+                                    const isSwappedIn = isSwapEp && d.swapInIds.includes(sid);
+                                    return { ...s, epPts: score?.final_points || 0, isVotedOut, isCaptain, isSwappedIn, rowKey: `${sid}-${idx}` };
+                                  }).filter(Boolean).sort((a, b) => b!.epPts - a!.epPts) as (Survivor & { epPts: number; isVotedOut: boolean; isCaptain: boolean; isSwappedIn: boolean; rowKey: string })[];
 
                                   // All survivors eliminated this episode who are on this team
                                   const votedOutThisEp = teamWithScores.filter(s => s.isVotedOut);
@@ -533,41 +551,45 @@ export default function ScoreboardPage() {
                                   return (
                                     <div key={ep} className="flex-shrink-0 rounded-xl border border-white/[0.06] overflow-hidden"
                                       style={{ minWidth: '200px', background: 'rgba(255,255,255,0.02)' }}>
-                                      {/* Episode header */}
-                                      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]"
-                                        style={{ background: 'rgba(255,107,53,0.06)' }}>
-                                        <span className="text-[11px] font-extrabold text-orange-400">E{ep}</span>
-                                        <span className="text-[13px] font-extrabold text-white">{d.fantasy} pts</span>
-                                      </div>
-
-                                      <div className="p-3 flex flex-col gap-3">
-
-                                        {/* Team section */}
-                                        <div>
-                                          <div className="text-[8px] font-bold tracking-widest text-white/25 uppercase mb-1.5">
-                                            Team <span className="text-white/40">{d.team} pts</span>
+                                        {/* Episode header */}
+                                        <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]"
+                                          style={{ background: isSwapEp ? 'rgba(52,152,219,0.08)' : 'rgba(255,107,53,0.06)' }}>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-[11px] font-extrabold text-orange-400">E{ep}</span>
+                                            {isSwapEp && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(52,152,219,0.15)', color: '#3498DB' }}>🔄 SWAP</span>}
                                           </div>
-                                          <div className="flex flex-col gap-1">
-                                            {teamWithScores.map(s => (
-                                              <div key={s.id} className="flex items-center justify-between gap-2">
-                                                <div className="flex items-center gap-1.5 min-w-0">
-                                                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: tc[s.tribe] || '#888' }} />
-                                                  <span className="text-[11px] truncate" style={{
-                                                    color: s.isVotedOut ? '#E74C3C' : s.isCaptain ? '#FFD54F' : 'rgba(255,255,255,0.6)',
-                                                    textDecoration: s.isVotedOut ? 'none' : !s.is_active ? 'line-through' : 'none',
-                                                  }}>
-                                                    {s.name}
-                                                  </span>
-                                                  {s.isCaptain && <span className="text-[8px]">👑</span>}
-                                                  {s.isVotedOut && <span className="text-[8px]">💀</span>}
-                                                </div>
-                                                <span className="text-[11px] font-bold flex-shrink-0" style={{ color: s.epPts > 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)' }}>
-                                                  {s.epPts || '—'}
-                                                </span>
-                                              </div>
-                                            ))}
-                                          </div>
+                                          <span className="text-[13px] font-extrabold text-white">{d.fantasy} pts</span>
                                         </div>
+
+                                        <div className="p-3 flex flex-col gap-3">
+
+                                          {/* Team section */}
+                                          <div>
+                                            <div className="text-[8px] font-bold tracking-widest text-white/25 uppercase mb-1.5">
+                                              Team <span className="text-white/40">{d.team} pts</span>
+                                            </div>
+                                            <div className="flex flex-col gap-1">
+                                              {teamWithScores.map(s => (
+                                                <div key={s.rowKey} className="flex items-center justify-between gap-2">
+                                                  <div className="flex items-center gap-1.5 min-w-0">
+                                                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: tc[s.tribe] || '#888' }} />
+                                                    <span className="text-[11px] truncate" style={{
+                                                      color: s.isVotedOut ? '#E74C3C' : s.isCaptain ? '#FFD54F' : s.isSwappedIn ? '#3498DB' : 'rgba(255,255,255,0.6)',
+                                                      textDecoration: s.isVotedOut ? 'none' : !s.is_active ? 'line-through' : 'none',
+                                                    }}>
+                                                      {s.name}
+                                                    </span>
+                                                    {s.isCaptain && <span className="text-[8px]">👑</span>}
+                                                    {s.isVotedOut && <span className="text-[8px]">💀</span>}
+                                                    {s.isSwappedIn && !s.isVotedOut && <span className="text-[7px] font-bold px-1 py-0.5 rounded" style={{ background: 'rgba(52,152,219,0.15)', color: '#3498DB' }}>NEW</span>}
+                                                  </div>
+                                                  <span className="text-[11px] font-bold flex-shrink-0" style={{ color: s.epPts > 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)' }}>
+                                                    {s.epPts || '—'}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
 
                                         {/* Captain bonus */}
                                         {d.captain > 0 && (
