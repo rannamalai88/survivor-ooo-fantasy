@@ -18,6 +18,7 @@ interface ExistingPick {
   chip_target: string | null;
   swap_out_ids: string[] | null;
   swap_in_ids: string[] | null;
+  player_add_id: string | null;
   submitted_at: string | null;
   is_locked: boolean;
 }
@@ -107,20 +108,17 @@ function SwapOutPanel({
 }) {
   const [swapFilter, setSwapFilter] = useState('All');
 
-  // Resulting team = team members not swapped out + swapped in survivors
   const keepingIds = activeTeam.filter(m => !swapOuts.includes(m.id)).map(m => m.id);
   const resultingTeamIds = [...keepingIds, ...swapIns];
 
-  // Any active survivor can be swapped in, including duplicates.
   const availableForSwapIn = allActiveSurvivors;
   const filteredAvailable = swapFilter === 'All' ? availableForSwapIn : availableForSwapIn.filter(s => s.tribe === swapFilter);
 
-  const slotsOpen = swapOuts.length - swapIns.length; // how many swap-ins still needed
+  const slotsOpen = swapOuts.length - swapIns.length;
 
   return (
     <div style={{ marginTop: '12px', background: 'rgba(52,152,219,0.04)', border: '1px solid rgba(52,152,219,0.2)', borderRadius: '12px', padding: '16px' }}>
 
-      {/* ── YOUR TEAM ── */}
       <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
         Your team — click to swap out
       </div>
@@ -146,7 +144,6 @@ function SwapOutPanel({
         })}
       </div>
 
-      {/* ── SWAP PAIRS ── */}
       {swapOuts.length > 0 && (
         <>
           <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
@@ -159,14 +156,11 @@ function SwapOutPanel({
               const inSurvivor = inId ? allActiveSurvivors.find(s => s.id === inId) : null;
               return (
                 <div key={outId} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px' }}>
-                  {/* Out */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
                     {outMember && <Av name={outMember.name} tribe={outMember.tribe} photoUrl={outMember.photo_url} sz={22} />}
                     <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', textDecoration: 'line-through' }}>{outMember?.name || '?'}</span>
                   </div>
-                  {/* Arrow */}
                   <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.2)' }}>→</span>
-                  {/* In */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
                     {inSurvivor ? (
                       <>
@@ -190,7 +184,6 @@ function SwapOutPanel({
         </>
       )}
 
-      {/* ── AVAILABLE SURVIVORS ── */}
       {swapOuts.length > 0 && slotsOpen > 0 && (
         <>
           <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
@@ -207,7 +200,6 @@ function SwapOutPanel({
         </>
       )}
 
-      {/* ── RESULTING TEAM PREVIEW ── */}
       {swapOuts.length > 0 && swapIns.length === swapOuts.length && (
         <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(52,152,219,0.06)', border: '1px solid rgba(52,152,219,0.2)', borderRadius: '8px' }}>
           <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(52,152,219,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
@@ -243,6 +235,103 @@ function SwapOutPanel({
 }
 
 // ============================================================
+// Player Add Panel — shown when chip 5 is selected
+// ============================================================
+function PlayerAddPanel({
+  activeTeam,
+  allActiveSurvivors,
+  selected,
+  onSelect,
+  isLocked,
+  tribes,
+}: {
+  activeTeam: TeamMember[];
+  allActiveSurvivors: Survivor[];
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+  isLocked: boolean;
+  tribes: string[];
+}) {
+  const [filter, setFilter] = useState('All');
+  const teamIds = useMemo(() => new Set(activeTeam.map(m => m.id)), [activeTeam]);
+  const filtered = filter === 'All' ? allActiveSurvivors : allActiveSurvivors.filter(s => s.tribe === filter);
+  const selectedSurvivor = selected ? allActiveSurvivors.find(s => s.id === selected) : null;
+  const isDoublingUp = !!(selectedSurvivor && teamIds.has(selectedSurvivor.id));
+
+  return (
+    <div style={{ marginTop: '12px', background: 'rgba(155,89,182,0.04)', border: '1px solid rgba(155,89,182,0.25)', borderRadius: '12px', padding: '16px' }}>
+
+      <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
+        Pick an active survivor to add this episode
+      </div>
+      <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginBottom: '12px', lineHeight: 1.5 }}>
+        They score for you this episode only. Doubling up on someone already on your team is allowed — they&apos;ll score twice. Roster reverts next episode.
+      </div>
+
+      <TribeFilter value={filter} onChange={setFilter} tribes={tribes} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
+        {filtered.length === 0 ? (
+          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center', gridColumn: '1/-1' }}>No active survivors with this filter</div>
+        ) : filtered.map(s => {
+          const onTeam = teamIds.has(s.id);
+          const isSelected = selected === s.id;
+          return (
+            <div
+              key={s.id}
+              onClick={() => !isLocked && onSelect(isSelected ? null : s.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 12px',
+                background: isSelected ? `${TC[s.tribe]}12` : 'rgba(255,255,255,0.02)',
+                border: isSelected ? `1px solid ${TC[s.tribe]}50` : '1px solid rgba(255,255,255,0.04)',
+                borderRadius: '10px',
+                cursor: isLocked ? 'default' : 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              <Av name={s.name} tribe={s.tribe} photoUrl={s.photo_url} sz={28} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)' }}>{s.name}</span>
+                  {onTeam && (
+                    <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px' }}>ON TEAM</span>
+                  )}
+                </div>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: TC[s.tribe], letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>
+              </div>
+              {isSelected && (
+                <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: TC[s.tribe], display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ color: '#fff', fontSize: '11px', fontWeight: 800 }}>✓</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {selectedSurvivor && (
+        <div style={{ marginTop: '14px', padding: '12px', background: 'rgba(155,89,182,0.08)', border: '1px solid rgba(155,89,182,0.25)', borderRadius: '8px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(155,89,182,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
+            ✓ Adding for this episode
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <Av name={selectedSurvivor.name} tribe={selectedSurvivor.tribe} photoUrl={selectedSurvivor.photo_url} sz={24} />
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>{selectedSurvivor.name}</span>
+            <span style={{ fontSize: '8px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(155,89,182,0.18)', color: '#9B59B6', letterSpacing: '0.5px' }}>NEW</span>
+            {isDoublingUp && (
+              <span style={{ fontSize: '10px', color: 'rgba(155,89,182,0.6)' }}>(doubling up — scores twice)</span>
+            )}
+          </div>
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', marginTop: '8px', lineHeight: 1.4 }}>
+            Available as captain this episode if your privilege is still active. Reverts to your permanent roster next episode.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // Main Component
 // ============================================================
 function PicksContent() {
@@ -270,6 +359,9 @@ function PicksContent() {
   // Swap Out state (chip 4)
   const [swapOuts, setSwapOuts] = useState<string[]>([]);
   const [swapIns, setSwapIns] = useState<string[]>([]);
+
+  // Player Add state (chip 5)
+  const [playerAdd, setPlayerAdd] = useState<string | null>(null);
 
   const [poolFilter, setPoolFilter] = useState('All');
   const [netFilter, setNetFilter] = useState('All');
@@ -306,6 +398,7 @@ function PicksContent() {
         setChipTarget(pickData.chip_target);
         setSwapOuts(pickData.swap_out_ids || []);
         setSwapIns(pickData.swap_in_ids || []);
+        setPlayerAdd(pickData.player_add_id || null);
       }
 
       const { data: poolData } = await supabase.from('pool_status').select('*').eq('season_id', sid).eq('manager_id', manager.id).maybeSingle();
@@ -343,7 +436,7 @@ function PicksContent() {
     tick(); const iv = setInterval(tick, 60000); return () => clearInterval(iv);
   }, [season]);
 
-  // If captain is being swapped out, clear captain selection
+  // If captain is being swapped out (chip 4), clear captain selection
   useEffect(() => {
     if (chipPlay === 4 && captain && swapOuts.includes(captain)) {
       setCaptain(null);
@@ -356,22 +449,33 @@ function PicksContent() {
   const activeSurvivors = allSurvivors.filter(s => s.is_active);
   const activeTeam = myTeam.filter(s => s.is_active);
 
-  // When chip 4 is active, captain options = resulting team (keeping + swapped in),
-  // deduplicated by ID. Same survivor multiple times (e.g. all-Rick team) only
-  // needs one captain designation — they all share the same ID anyway.
+  // Captain options reflect the effective team for the chosen chip:
+  // - chip 4 (Swap Out): permanent team minus swap-outs plus swap-ins
+  // - chip 5 (Player Add): permanent team plus the added survivor
+  // - otherwise: permanent active team
+  // Deduplicated by ID — same survivor in multiple roster slots only needs one captain entry.
   const captainOptions = useMemo(() => {
-    const base = chipPlay !== 4 ? activeTeam : (() => {
+    let base: TeamMember[];
+
+    if (chipPlay === 4) {
       const keeping = activeTeam.filter(m => !swapOuts.includes(m.id));
       const swappedIn = swapIns
         .map(id => allSurvivors.find(s => s.id === id))
         .filter((s): s is Survivor => !!s)
         .map(s => ({ ...s, is_team_active: true } as TeamMember));
-      return [...keeping, ...swappedIn];
-    })();
-    // Deduplicate by ID
+      base = [...keeping, ...swappedIn];
+    } else if (chipPlay === 5 && playerAdd) {
+      const added = allSurvivors.find(s => s.id === playerAdd);
+      base = added
+        ? [...activeTeam, { ...added, is_team_active: true } as TeamMember]
+        : activeTeam;
+    } else {
+      base = activeTeam;
+    }
+
     const seen = new Set<string>();
     return base.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
-  }, [chipPlay, activeTeam, swapOuts, swapIns, allSurvivors]);
+  }, [chipPlay, activeTeam, swapOuts, swapIns, playerAdd, allSurvivors]);
 
   const poolSurvivors = activeSurvivors.filter(s => !usedPoolPicks.includes(s.id));
   const filteredPool = poolFilter === 'All' ? poolSurvivors : poolSurvivors.filter(s => s.tribe === poolFilter);
@@ -379,12 +483,14 @@ function PicksContent() {
   const availableChips = CHIPS.filter(c => { if (usedChips.includes(c.id)) return false; const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number); return currentWeek >= lo && currentWeek <= hi; });
   const activeChipWindow = availableChips.length > 0;
 
-  // Swap is valid if: chip 4 not played, OR at least 1 swap and all pairs are complete
+  // Validation
   const swapValid = chipPlay !== 4 || (swapOuts.length > 0 && swapOuts.length === swapIns.length);
+  const playerAddValid = chipPlay !== 5 || playerAdd !== null;
   const picksComplete = (captainPrivilegeLost || captain !== null) &&
     (poolStatus !== 'active' || poolPick !== null) &&
     netPick !== null &&
-    swapValid;
+    swapValid &&
+    playerAddValid;
   const isLocked = existingPick?.is_locked || isPastDeadline;
 
   // Swap handlers
@@ -399,8 +505,6 @@ function PicksContent() {
   }
 
   function handleSelectSwapIn(survivorId: string) {
-    // Always append — duplicates are allowed (e.g. all-Rick team).
-    // Only block if we already have enough swap-ins to fill all open slots.
     if (swapIns.length < swapOuts.length) {
       setSwapIns(prev => [...prev, survivorId]);
     }
@@ -408,6 +512,17 @@ function PicksContent() {
 
   function handleRemoveSwapIn(index: number) {
     setSwapIns(prev => prev.filter((_, i) => i !== index));
+  }
+
+  // Player Add handler — clears captain if it was the previously-added player
+  // and that player isn't on the permanent team.
+  function handleSelectPlayerAdd(newId: string | null) {
+    const prev = playerAdd;
+    if (prev && prev !== newId && captain === prev) {
+      const onPermanentTeam = activeTeam.some(m => m.id === prev);
+      if (!onPermanentTeam) setCaptain(null);
+    }
+    setPlayerAdd(newId);
   }
 
   async function savePicks() {
@@ -425,6 +540,7 @@ function PicksContent() {
       chip_target: chipTarget,
       swap_out_ids: chipPlay === 4 ? swapOuts : [],
       swap_in_ids: chipPlay === 4 ? swapIns : [],
+      player_add_id: chipPlay === 5 ? playerAdd : null,
       submitted_at: new Date().toISOString(),
       is_locked: false,
     };
@@ -485,6 +601,7 @@ function PicksContent() {
               <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', margin: '0 0 12px', lineHeight: 1.5 }}>
                 Choose one of your <b style={{ color: 'rgba(255,255,255,0.5)' }}>active</b> survivors. Points <b style={{ color: '#FFD54F' }}>doubled (2x)</b>.
                 {chipPlay === 4 && swapOuts.length > 0 && <span style={{ color: 'rgba(52,152,219,0.7)' }}> Showing your swapped team.</span>}
+                {chipPlay === 5 && playerAdd && <span style={{ color: 'rgba(155,89,182,0.7)' }}> Includes your added player.</span>}
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {captainOptions.length === 0
@@ -541,8 +658,14 @@ function PicksContent() {
                 const next = chipPlay === c.id ? null : c.id;
                 setChipPlay(next);
                 setChipTarget(null);
-                // Clear swap state when deselecting chip 4
                 if (next !== 4) { setSwapOuts([]); setSwapIns([]); }
+                if (next !== 5) {
+                  // Clear captain if it was the added player and not on permanent team
+                  if (playerAdd && captain === playerAdd && !activeTeam.some(m => m.id === playerAdd)) {
+                    setCaptain(null);
+                  }
+                  setPlayerAdd(null);
+                }
               }}
                 style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', background: chipPlay === c.id ? 'rgba(255,215,0,0.08)' : 'rgba(255,255,255,0.02)', border: chipPlay === c.id ? '1px solid rgba(255,215,0,0.25)' : '1px solid rgba(255,255,255,0.04)', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', marginBottom: '6px' }}>
                 <span style={{ fontSize: '24px' }}>{c.icon}</span>
@@ -593,6 +716,25 @@ function PicksContent() {
               </div>
             )}
 
+            {/* Player Add panel */}
+            {chipPlay === 5 && (
+              <PlayerAddPanel
+                activeTeam={activeTeam}
+                allActiveSurvivors={activeSurvivors}
+                selected={playerAdd}
+                onSelect={handleSelectPlayerAdd}
+                isLocked={isLocked}
+                tribes={tribes}
+              />
+            )}
+
+            {/* Player Add validation hint */}
+            {chipPlay === 5 && !playerAdd && (
+              <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(155,89,182,0.65)', textAlign: 'center' }}>
+                ⚠ Pick a survivor to add this episode
+              </div>
+            )}
+
           </>) : (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', margin: '0 0 10px' }}>No chip available this week.</p>
             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -610,11 +752,12 @@ function PicksContent() {
             {isLocked ? '🔒 PICKS LOCKED' : saving ? 'Saving...' : existingPick ? '🔥 UPDATE PICKS' : picksComplete ? '🔥 SUBMIT PICKS' : 'Complete all required picks to submit'}
           </button>
           {!picksComplete && !isLocked && (
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '8px' }}>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '8px', flexWrap: 'wrap' }}>
               {!captain && !captainPrivilegeLost && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Captain</span>}
               {poolStatus === 'active' && !poolPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Pool</span>}
               {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ NET</span>}
               {chipPlay === 4 && !swapValid && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Complete your swap</span>}
+              {chipPlay === 5 && !playerAddValid && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Pick a player to add</span>}
             </div>
           )}
         </div>

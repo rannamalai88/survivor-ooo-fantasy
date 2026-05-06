@@ -88,10 +88,10 @@ export async function POST(request: NextRequest) {
       managerTeams[t.manager_id].push(t.survivor_id);
     }
 
-    // 5. Get weekly picks
+    // 5. Get weekly picks (incl. swap_out_ids, swap_in_ids, player_add_id)
     const { data: weeklyPicks } = await supabase
       .from('weekly_picks')
-      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id, pool_backdoor_id, swap_out_ids, swap_in_ids')
+      .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id, pool_backdoor_id, swap_out_ids, swap_in_ids, player_add_id')
       .eq('season_id', seasonId)
       .eq('episode', episode);
 
@@ -113,10 +113,19 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 7b. Apply Swap Out (chip 4) — build effectiveTeams.
-    //     For managers who played chip 4, replace their permanent roster
-    //     with (permanent - swap_out_ids + swap_in_ids) for this episode.
-    //     The permanent teams table is never modified.
+    // 7b. Apply Swap Out (chip 4) or Player Add (chip 5) — build effectiveTeams.
+    //
+    //   Chip 4 (Swap Out): replace permanent roster with
+    //     (permanent - swap_out_ids + swap_in_ids) — same size as before.
+    //
+    //   Chip 5 (Player Add): append player_add_id to permanent roster.
+    //     Roster grows by 1 for this episode only. Doubling up (adding a
+    //     survivor already on permanent team) is allowed — the survivor's
+    //     FSG + V.O. will count for each roster slot they occupy. Captain
+    //     bonus still fires once on captain_id regardless.
+    //
+    //   Permanent `teams` table is never modified. Next episode's
+    //   weekly_picks row has chip_played=null → falls through to baseteam.
     // ----------------------------------------------------------------
     const effectiveTeams: Record<string, string[]> = {};
     for (const mgr of managers) {
@@ -135,6 +144,8 @@ export async function POST(request: NextRequest) {
           ...baseteam.filter(id => !swapOuts.includes(id)),
           ...swapIns,
         ];
+      } else if (picks?.chip_played === 5 && picks?.player_add_id) {
+        effectiveTeams[mgr.id] = [...baseteam, picks.player_add_id];
       } else {
         effectiveTeams[mgr.id] = baseteam;
       }
@@ -308,7 +319,6 @@ export async function POST(request: NextRequest) {
         } else {
           // Cap weeks_survived at (episode - 1) so re-running Calculate
           // for the same episode never double-counts a survival week.
-          // episode 2 = max 1 week, episode 3 = max 2 weeks, etc.
           const maxPossibleWeeks = episode - 1;
           const newWeeks = Math.min(
             (currentPool?.weeks_survived || 0) + 1,
@@ -329,12 +339,6 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 10d. Backdoor reactivation — check drowned managers' backdoor picks.
-    //
-    //      A drowned manager submits pool_backdoor_id instead of a normal
-    //      pick. If the survivor they named was eliminated THIS episode,
-    //      they guessed correctly and get reactivated (status → 'active').
-    //      Their weeks_survived is NOT incremented — they sat out this week.
-    //      If they guessed wrong, they stay drowned (no change needed).
     // ----------------------------------------------------------------
     const { data: drownedPools } = await supabase
       .from('pool_status')
@@ -345,7 +349,6 @@ export async function POST(request: NextRequest) {
     if (drownedPools && drownedPools.length > 0) {
       const drownedManagerIds = drownedPools.map((p) => p.manager_id);
 
-      // Find any drowned manager who submitted a backdoor pick this episode
       const backdoorPicks = (allPoolPicks || []).filter(
         (p) => drownedManagerIds.includes(p.manager_id) && p.pool_backdoor_id
       );
@@ -353,7 +356,6 @@ export async function POST(request: NextRequest) {
       for (const pick of backdoorPicks) {
         const backdoorSurvivor = survivors?.find((s) => s.id === pick.pool_backdoor_id);
 
-        // Correct if the named survivor was eliminated specifically this episode
         const guessedCorrectly =
           backdoorSurvivor &&
           !backdoorSurvivor.is_active &&
@@ -367,9 +369,8 @@ export async function POST(request: NextRequest) {
               season_id: seasonId,
               manager_id: pick.manager_id,
               status: 'active',
-              drowned_episode: null,   // clear the drowning record
+              drowned_episode: null,
               weeks_survived: poolEntry?.weeks_survived || 0,
-              // weeks_survived stays the same — no credit for the drowned week
             },
             { onConflict: 'season_id,manager_id' }
           );
@@ -399,7 +400,6 @@ export async function POST(request: NextRequest) {
         .eq('manager_id', mgr.id)
         .maybeSingle();
 
-      // Top fantasy score across all managers (for pool formula denominator)
       const { data: allTotals } = await supabase
         .from('manager_scores')
         .select('manager_id, fantasy_points')
@@ -411,8 +411,6 @@ export async function POST(request: NextRequest) {
       }
       const topFantasy = Math.max(...Object.values(managerSums), 0);
 
-      // Pool formula: (weeks_survived / total_pool_weeks) × 0.25 × top_fantasy
-      // total_pool_weeks = total_episodes - 1  (no pool pick in episode 1)
       const poolScore = calculatePoolScore(
         poolStatus?.weeks_survived || 0,
         totalWeeks,
