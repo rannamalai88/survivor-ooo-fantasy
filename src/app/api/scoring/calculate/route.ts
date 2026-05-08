@@ -119,18 +119,6 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 7b. Apply Swap Out (chip 4) or Player Add (chip 5) — build effectiveTeams.
-    //
-    //   Chip 4 (Swap Out): replace permanent roster with
-    //     (permanent - swap_out_ids + swap_in_ids) — same size as before.
-    //
-    //   Chip 5 (Player Add): append player_add_id to permanent roster.
-    //     Roster grows by 1 for this episode only. Doubling up (adding a
-    //     survivor already on permanent team) is allowed — the survivor's
-    //     FSG + V.O. + manual adj will count for each roster slot they
-    //     occupy. Captain bonus still fires once on captain_id regardless.
-    //
-    //   Permanent `teams` table is never modified. Next episode's
-    //   weekly_picks row has chip_played=null → falls through to baseteam.
     // ----------------------------------------------------------------
     const effectiveTeams: Record<string, string[]> = {};
     for (const mgr of managers) {
@@ -166,9 +154,6 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 8. FIRST PASS — base fantasy score (chipPlayed: null) for every manager.
-    //    Used as the "target score" for Chip 1 (Assistant Manager).
-    //    No chip effects → no circular stacking possible.
-    //    Result = FSG + voted-out + manual adj + captain 2x.
     // ----------------------------------------------------------------
     const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
@@ -189,7 +174,6 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 9. SECOND PASS — full calculation including chip effects.
-    //    chip_target stored as manager NAME from picks UI; resolve to ID.
     // ----------------------------------------------------------------
     const resultRows: any[] = [];
 
@@ -278,109 +262,114 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 10c. Update pool status for ACTIVE managers —
-    //      increment weeks_survived if their pick survived,
-    //      or drown them if their pick was eliminated.
+    // 10c. POOL STATUS — canonical recomputation (idempotent).
+    //
+    // Replaces the prior incremental logic which over-counted weeks_survived
+    // for any manager with a drown→reactivate cycle when Calculate was run
+    // multiple times. Each Calculate run now produces the same canonical
+    // state regardless of how many times it has been invoked.
+    //
+    // For each manager, walk every episode 2..episode in order from a clean
+    // slate, replaying their pool_pick / pool_backdoor history:
+    //
+    //   active + pool_pick survives             → weeks_survived += 1
+    //   active + pool_pick eliminated this ep   → status = drowned, drowned_ep = ep
+    //   drowned + correct backdoor for this ep  → status = active (NO weeks credit)
+    //   drowned + wrong/no backdoor             → stays drowned
+    //   active + no pool_pick                   → unchanged (auto-elim not enforced)
+    //
+    // 'burnt' and 'finished' statuses are preserved if already set — those
+    // are admin/end-of-season states that this function does not manage.
     // ----------------------------------------------------------------
-    const { data: allPoolPicks } = await supabase
+
+    // Pull every manager's complete pool history from E2..episode
+    const { data: allMgrPicksHistory } = await supabase
       .from('weekly_picks')
-      .select('manager_id, pool_pick_id, pool_backdoor_id')
+      .select('manager_id, episode, pool_pick_id, pool_backdoor_id')
       .eq('season_id', seasonId)
-      .eq('episode', episode);
+      .gte('episode', 2)
+      .lte('episode', episode);
 
-    if (allPoolPicks) {
-      for (const pick of allPoolPicks) {
-        if (!pick.pool_pick_id) continue;
-
-        const pickedSurvivor = survivors?.find((s) => s.id === pick.pool_pick_id);
-        const pickEliminated =
-          pickedSurvivor &&
-          !pickedSurvivor.is_active &&
-          pickedSurvivor.eliminated_episode !== null &&
-          pickedSurvivor.eliminated_episode <= episode;
-
-        const { data: currentPool } = await supabase
-          .from('pool_status')
-          .select('*')
-          .eq('season_id', seasonId)
-          .eq('manager_id', pick.manager_id)
-          .maybeSingle();
-
-        // Only process currently-active managers here.
-        // Drowned managers are handled separately in 10d below.
-        if (currentPool && currentPool.status !== 'active') continue;
-
-        if (pickEliminated) {
-          await supabase.from('pool_status').upsert(
-            {
-              season_id: seasonId,
-              manager_id: pick.manager_id,
-              status: 'drowned',
-              drowned_episode: episode,
-              weeks_survived: currentPool?.weeks_survived || 0,
-            },
-            { onConflict: 'season_id,manager_id' }
-          );
-        } else {
-          // Cap weeks_survived at (episode - 1) so re-running Calculate
-          // for the same episode never double-counts a survival week.
-          const maxPossibleWeeks = episode - 1;
-          const newWeeks = Math.min(
-            (currentPool?.weeks_survived || 0) + 1,
-            maxPossibleWeeks
-          );
-          await supabase.from('pool_status').upsert(
-            {
-              season_id: seasonId,
-              manager_id: pick.manager_id,
-              status: 'active',
-              weeks_survived: newWeeks,
-            },
-            { onConflict: 'season_id,manager_id' }
-          );
-        }
-      }
+    const picksByMgrEp: Record<string, Record<number, { pool_pick_id: string | null; pool_backdoor_id: string | null }>> = {};
+    for (const p of allMgrPicksHistory || []) {
+      if (!picksByMgrEp[p.manager_id]) picksByMgrEp[p.manager_id] = {};
+      picksByMgrEp[p.manager_id][p.episode] = {
+        pool_pick_id: p.pool_pick_id,
+        pool_backdoor_id: p.pool_backdoor_id,
+      };
     }
 
-    // ----------------------------------------------------------------
-    // 10d. Backdoor reactivation — check drowned managers' backdoor picks.
-    // ----------------------------------------------------------------
-    const { data: drownedPools } = await supabase
+    // Read existing statuses to preserve 'burnt' / 'finished'
+    const { data: existingPoolStatuses } = await supabase
       .from('pool_status')
-      .select('manager_id, weeks_survived')
-      .eq('season_id', seasonId)
-      .eq('status', 'drowned');
+      .select('manager_id, status')
+      .eq('season_id', seasonId);
 
-    if (drownedPools && drownedPools.length > 0) {
-      const drownedManagerIds = drownedPools.map((p) => p.manager_id);
+    const existingStatusByMgr: Record<string, string> = {};
+    for (const p of existingPoolStatuses || []) {
+      existingStatusByMgr[p.manager_id] = p.status;
+    }
 
-      const backdoorPicks = (allPoolPicks || []).filter(
-        (p) => drownedManagerIds.includes(p.manager_id) && p.pool_backdoor_id
-      );
+    for (const mgr of managers) {
+      // Skip managers in admin-set states — leave their data alone
+      const existing = existingStatusByMgr[mgr.id];
+      if (existing === 'burnt' || existing === 'finished') continue;
 
-      for (const pick of backdoorPicks) {
-        const backdoorSurvivor = survivors?.find((s) => s.id === pick.pool_backdoor_id);
+      const mgrPicks = picksByMgrEp[mgr.id] || {};
+      let status: 'active' | 'drowned' = 'active';
+      let weeksSurvived = 0;
+      let drownedEpisode: number | null = null;
 
-        const guessedCorrectly =
-          backdoorSurvivor &&
-          !backdoorSurvivor.is_active &&
-          backdoorSurvivor.eliminated_episode === episode;
+      for (let ep = 2; ep <= episode; ep++) {
+        const pick = mgrPicks[ep];
 
-        if (guessedCorrectly) {
-          const poolEntry = drownedPools.find((p) => p.manager_id === pick.manager_id);
+        if (status === 'active') {
+          if (pick?.pool_pick_id) {
+            const survivor = survivors?.find((s) => s.id === pick.pool_pick_id);
+            const eliminatedThisEpOrEarlier =
+              survivor &&
+              !survivor.is_active &&
+              survivor.eliminated_episode !== null &&
+              survivor.eliminated_episode <= ep;
 
-          await supabase.from('pool_status').upsert(
-            {
-              season_id: seasonId,
-              manager_id: pick.manager_id,
-              status: 'active',
-              drowned_episode: null,
-              weeks_survived: poolEntry?.weeks_survived || 0,
-            },
-            { onConflict: 'season_id,manager_id' }
-          );
+            if (eliminatedThisEpOrEarlier) {
+              status = 'drowned';
+              drownedEpisode = ep;
+            } else {
+              weeksSurvived += 1;
+            }
+          }
+          // No pool_pick + active → no change. (Auto-elimination for missing
+          // picks is not enforced here; that would be a separate policy.)
+        } else {
+          // drowned — check this ep's backdoor
+          if (pick?.pool_backdoor_id) {
+            const survivor = survivors?.find((s) => s.id === pick.pool_backdoor_id);
+            const guessedCorrectly =
+              survivor &&
+              !survivor.is_active &&
+              survivor.eliminated_episode === ep;
+
+            if (guessedCorrectly) {
+              status = 'active';
+              drownedEpisode = null;
+              // Reactivation episode does NOT count toward weeks_survived
+              // — the manager sat out this episode while drowned.
+            }
+          }
         }
       }
+
+      await supabase.from('pool_status').upsert(
+        {
+          season_id: seasonId,
+          manager_id: mgr.id,
+          status,
+          weeks_survived: weeksSurvived,
+          drowned_episode: drownedEpisode,
+        },
+        { onConflict: 'season_id,manager_id' }
+      );
     }
 
     // 11. Recalculate manager_totals
