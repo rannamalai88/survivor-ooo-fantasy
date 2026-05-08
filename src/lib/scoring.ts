@@ -29,18 +29,29 @@ export interface ManagerEpisodeResult {
  * Calculate manager fantasy points for one episode.
  *
  * Fantasy = baseTeamPoints + teamVotedOutBonus + captainBonusPoints + chipBonusPoints
+ *   (where baseTeamPoints already folds in any manualAdjustment for display)
+ *
+ * Manual adjustments (e.g. idol-in-pocket -5 penalty) are flat per-survivor
+ * corrections that apply ONCE per roster slot but are NEVER multiplied by
+ * captain 2x, Super Captain 4x, or Team Boost 3x. They flow through
+ * `manualAdjustment` and only land in baseTeamPoints (and thus fantasyPoints
+ * once per slot). Doubling a survivor via Player Add (chip 5) does double
+ * the per-slot penalty — that's intentional, the survivor is on the team
+ * twice that episode.
  *
  * Chip 1 — Assistant Manager:
  *   Adds the TARGET manager's full fantasy score for the episode, EXCLUDING
  *   any chip bonus the target played (no circular stacking). In practice this
  *   means we pass in the target's first-pass score (chip_played: null run).
- *   Concretely: target's (FSG points + voted-out bonus + captain 2x).
+ *   Concretely: target's (FSG points + voted-out bonus + captain 2x + manual adj).
  *
- * Chip 2 — Team Boost: non-captain members' points tripled (3x).
- * Chip 3 — Super Captain: captain at 4x instead of 2x.
+ * Chip 2 — Team Boost: non-captain members' (FSG + V.O.) tripled (3x).
+ *   Manual adjustments are NOT multiplied.
+ * Chip 3 — Super Captain: captain's (FSG + V.O.) at 4x instead of 2x.
+ *   Manual adjustments are NOT multiplied.
  * Chips 4 & 5 — Swap Out / Player Add: roster changes only, no point effect.
  *
- * Captain 2x does NOT apply to the Sole Survivor +15 bonus.
+ * Captain 2x does NOT apply to manual adjustments OR the Sole Survivor +15 bonus.
  */
 export function calculateManagerFantasy(params: {
   teamSurvivorIds: string[];
@@ -48,9 +59,9 @@ export function calculateManagerFantasy(params: {
   hasCaptainPrivilege: boolean;
   chipPlayed: number | null;
   chipTarget: string | null;
-  survivorEpScores: Record<string, { fsgPoints: number; votedOutBonus: number; isNewlyEliminated: boolean }>;
+  survivorEpScores: Record<string, { fsgPoints: number; manualAdjustment: number; votedOutBonus: number; isNewlyEliminated: boolean }>;
   // For Chip 1 (Assistant Manager): target manager's fantasy total for this episode
-  // computed in a first pass with chipPlayed: null — so it is FSG + voted-out + captain 2x,
+  // computed in a first pass with chipPlayed: null — so it is FSG + voted-out + captain 2x + manual adj,
   // with NO chip bonus from the target (prevents circular stacking).
   assistantManagerTargetScore?: number;
 }): {
@@ -72,24 +83,28 @@ export function calculateManagerFantasy(params: {
     assistantManagerTargetScore,
   } = params;
 
-  let baseTeamPoints = 0;
+  let baseTeamFsg = 0;          // raw FSG only (clean — used by all multipliers)
   let teamVotedOutBonus = 0;
+  let teamManualAdjustment = 0; // flat penalties — never multiplied
   let captainBasePoints = 0;
   let captainBonusPoints = 0;
   let captainLost = false;
   let chipBonusPoints = 0;
   let chipDetail: string | null = null;
 
-  // Step 1: Sum base FSG points + voted-out bonus for all team members
+  // Step 1: Sum base FSG + V.O. + manual adj for all team members.
+  // Note: fsgPoints, votedOutBonus, and manualAdjustment are kept separate.
+  // Multipliers (captain 2x, chips) only ever touch fsgPoints + votedOutBonus.
   for (const sid of teamSurvivorIds) {
     const scores = survivorEpScores[sid];
     if (!scores) continue;
-    baseTeamPoints += scores.fsgPoints;
+    baseTeamFsg += scores.fsgPoints;
     teamVotedOutBonus += scores.votedOutBonus;
+    teamManualAdjustment += scores.manualAdjustment;
   }
 
-  // Step 2: Captain 2x
-  // The extra 1x bonus is stored in captainBonusPoints (the base 1x is already in baseTeamPoints).
+  // Step 2: Captain 2x — applies to (FSG + V.O.) only, NOT manual adjustments.
+  // The extra 1x bonus is stored in captainBonusPoints (the base 1x is already in baseTeam).
   if (captainId && hasCaptainPrivilege && teamSurvivorIds.includes(captainId)) {
     const captainScores = survivorEpScores[captainId];
     if (captainScores) {
@@ -102,12 +117,12 @@ export function calculateManagerFantasy(params: {
     }
   }
 
-  // Step 3: Chip effects
+  // Step 3: Chip effects — multipliers act on (FSG + V.O.) only.
   if (chipPlayed) {
     switch (chipPlayed) {
       case 1: {
         // Assistant Manager — add the target manager's full fantasy for this episode
-        // (FSG + voted-out + captain 2x), excluding whatever chip THEY played.
+        // (FSG + voted-out + manual adj + captain 2x), excluding whatever chip THEY played.
         if (assistantManagerTargetScore !== undefined) {
           chipBonusPoints = assistantManagerTargetScore;
           chipDetail = `Assistant Manager: +${assistantManagerTargetScore} pts copied from target`;
@@ -118,7 +133,8 @@ export function calculateManagerFantasy(params: {
       }
 
       case 2: {
-        // Team Boost — non-captain members get 3x (base 1x + 2x extra)
+        // Team Boost — non-captain members get 3x of (FSG + V.O.) (base 1x + 2x extra).
+        // Manual adjustments are NOT multiplied.
         for (const sid of teamSurvivorIds) {
           if (sid === captainId) continue; // captain is handled separately
           const scores = survivorEpScores[sid];
@@ -131,8 +147,8 @@ export function calculateManagerFantasy(params: {
       }
 
       case 3: {
-        // Super Captain — captain at 4x instead of 2x
-        // captainBonusPoints already has +1x. We add +2x more = +3x extra total = 4x.
+        // Super Captain — captain's (FSG + V.O.) at 4x instead of 2x.
+        // Manual adjustments are NOT multiplied.
         if (captainId && hasCaptainPrivilege && captainBasePoints > 0) {
           chipBonusPoints = captainBasePoints * 2;
           chipDetail = `Super Captain: captain at 4x`;
@@ -154,6 +170,12 @@ export function calculateManagerFantasy(params: {
     }
   }
 
+  // Final totals.
+  // baseTeamPoints (returned for display in manager_scores.base_team_points)
+  // folds in manualAdjustment so the per-episode TEAM card shows the
+  // adjusted value, e.g. "TEAM -5 PTS" when an idol penalty applies.
+  // fantasyPoints includes manualAdjustment exactly once (via baseTeamPoints).
+  const baseTeamPoints = baseTeamFsg + teamManualAdjustment;
   const fantasyPoints =
     baseTeamPoints + teamVotedOutBonus + captainBonusPoints + chipBonusPoints;
 

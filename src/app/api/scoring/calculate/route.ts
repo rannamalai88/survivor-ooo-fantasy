@@ -49,10 +49,14 @@ export async function POST(request: NextRequest) {
       .select('id, name, is_active, eliminated_episode, elimination_order')
       .eq('season_id', seasonId);
 
-    // Build score lookup — FSG points + voted-out bonus per survivor
+    // Build score lookup. fsgPoints, manualAdjustment, and votedOutBonus are
+    // kept SEPARATE so the scoring engine can apply each one according to the
+    // right rule:
+    //   - fsgPoints + votedOutBonus  → multiplied by captain 2x and chip multipliers
+    //   - manualAdjustment           → flat per-roster-slot, never multiplied
     const survivorEpScores: Record<
       string,
-      { fsgPoints: number; votedOutBonus: number; isNewlyEliminated: boolean }
+      { fsgPoints: number; manualAdjustment: number; votedOutBonus: number; isNewlyEliminated: boolean }
     > = {};
     for (const s of episodeScores) {
       const survivor = survivors?.find((sv) => sv.id === s.survivor_id);
@@ -60,7 +64,8 @@ export async function POST(request: NextRequest) {
       const votedOutBonus = isNewlyEliminated ? survivor?.elimination_order || 0 : 0;
 
       survivorEpScores[s.survivor_id] = {
-        fsgPoints: (s.fsg_points || 0) + (s.manual_adjustment || 0),
+        fsgPoints: s.fsg_points || 0,
+        manualAdjustment: s.manual_adjustment || 0,
         votedOutBonus,
         isNewlyEliminated,
       };
@@ -121,8 +126,8 @@ export async function POST(request: NextRequest) {
     //   Chip 5 (Player Add): append player_add_id to permanent roster.
     //     Roster grows by 1 for this episode only. Doubling up (adding a
     //     survivor already on permanent team) is allowed — the survivor's
-    //     FSG + V.O. will count for each roster slot they occupy. Captain
-    //     bonus still fires once on captain_id regardless.
+    //     FSG + V.O. + manual adj will count for each roster slot they
+    //     occupy. Captain bonus still fires once on captain_id regardless.
     //
     //   Permanent `teams` table is never modified. Next episode's
     //   weekly_picks row has chip_played=null → falls through to baseteam.
@@ -163,7 +168,7 @@ export async function POST(request: NextRequest) {
     // 8. FIRST PASS — base fantasy score (chipPlayed: null) for every manager.
     //    Used as the "target score" for Chip 1 (Assistant Manager).
     //    No chip effects → no circular stacking possible.
-    //    Result = FSG points + voted-out bonus + captain 2x only.
+    //    Result = FSG + voted-out + manual adj + captain 2x.
     // ----------------------------------------------------------------
     const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
