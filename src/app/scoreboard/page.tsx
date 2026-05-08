@@ -49,6 +49,7 @@ interface WeeklyPickRow {
   chip_played: number | null;
   swap_out_ids: string[] | null;
   swap_in_ids: string[] | null;
+  player_add_id: string | null;
 }
 
 interface TeamRow {
@@ -107,7 +108,7 @@ export default function ScoreboardPage() {
         supabase.from('survivor_scores').select('survivor_id, episode, final_points').eq('season_id', SEASON_ID).order('episode'),
         supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
         supabase.from('manager_scores').select('manager_id, episode, fantasy_points, base_team_points, captain_bonus, chip_bonus, voted_out_bonus, net_correct, chip_played, chip_detail, captain_lost').eq('season_id', SEASON_ID).order('episode'),
-        supabase.from('weekly_picks').select('manager_id, episode, captain_id, chip_played, swap_out_ids, swap_in_ids').eq('season_id', SEASON_ID).order('episode', { ascending: false }),
+        supabase.from('weekly_picks').select('manager_id, episode, captain_id, chip_played, swap_out_ids, swap_in_ids, player_add_id').eq('season_id', SEASON_ID).order('episode', { ascending: false }),
         // Fetch ALL team members (active + inactive) so voted-out survivors still show
         supabase.from('teams').select('manager_id, survivor_id').eq('season_id', SEASON_ID),
       ]);
@@ -139,7 +140,6 @@ export default function ScoreboardPage() {
   // ---- Captain info per manager (most recent pick) ----
   const captainInfo = useMemo(() => {
     const info: Record<string, { name: string; isActive: boolean }> = {};
-    // weeklyPicks is sorted desc by episode, first match = most recent
     weeklyPicks.forEach(pick => {
       if (info[pick.manager_id]) return;
       if (!pick.captain_id) return;
@@ -153,7 +153,6 @@ export default function ScoreboardPage() {
     return info;
   }, [weeklyPicks, survivorMap]);
 
-  // Captain privilege lost per manager (any prior episode with captain_lost = true)
   const captainPrivilegeLost = useMemo(() => {
     const lost = new Set<string>();
     managerScores.forEach(ms => { if (ms.captain_lost) lost.add(ms.manager_id); });
@@ -189,6 +188,7 @@ export default function ScoreboardPage() {
         chipDetail: string | null; netCorrect: boolean; captainLost: boolean;
         captainId: string | null;
         swapOutIds: string[]; swapInIds: string[];
+        playerAddId: string | null;
       }> = {};
       let grandTotal = 0;
 
@@ -207,6 +207,7 @@ export default function ScoreboardPage() {
           captainId:  pick?.captain_id     || null,
           swapOutIds: pick?.swap_out_ids   || [],
           swapInIds:  pick?.swap_in_ids    || [],
+          playerAddId: pick?.player_add_id || null,
         };
         grandTotal += ms.fantasy_points || 0;
       });
@@ -367,13 +368,9 @@ export default function ScoreboardPage() {
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-white/[0.03]">
-                  {/* Manager */}
                   <th className="text-left p-2.5 text-white/35 font-bold text-[10px] tracking-wider sticky left-0 bg-[#0d0d15] z-10 min-w-[110px]">MANAGER</th>
-                  {/* Players */}
                   <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-16">PLAYERS</th>
-                  {/* Captain */}
                   <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-24">CAPTAIN</th>
-                  {/* Episode columns */}
                   {episodes.map(ep => {
                     const isExp = expandedEpisodes.has(ep);
                     if (isExp) {
@@ -415,10 +412,7 @@ export default function ScoreboardPage() {
 
                   return (
                     <>
-                      {/* ── Main row ── */}
                       <tr key={m.id} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
-
-                        {/* Manager name — clickable to expand detail drawer */}
                         <td className="p-2.5 sticky left-0 bg-[#0d0d15] z-10">
                           <button
                             onClick={() => toggleManager(m.id)}
@@ -432,7 +426,6 @@ export default function ScoreboardPage() {
                           </button>
                         </td>
 
-                        {/* Players */}
                         <td className="p-2.5 text-center">
                           <div className="flex justify-center gap-0.5">
                             {Array.from({ length: 5 }).map((_, j) => (
@@ -443,7 +436,6 @@ export default function ScoreboardPage() {
                           <div className="text-[8px] text-white/20 mt-0.5">{m.activePlayers}/5</div>
                         </td>
 
-                        {/* Captain */}
                         <td className="p-2.5 text-center">
                           {m.captainPrivLost ? (
                             <div>
@@ -460,7 +452,6 @@ export default function ScoreboardPage() {
                           )}
                         </td>
 
-                        {/* Episode cells */}
                         {episodes.map(ep => {
                           const d = m.epDetails[ep];
                           const isExp = expandedEpisodes.has(ep);
@@ -498,13 +489,11 @@ export default function ScoreboardPage() {
                           );
                         })}
 
-                        {/* Total */}
                         <td className="p-2.5 text-center">
                           <span className="text-[15px] font-extrabold text-white px-2 py-0.5 rounded-md bg-white/[0.05]">{m.grandTotal}</span>
                         </td>
                       </tr>
 
-                      {/* ── Detail drawer row ── */}
                       {isExpanded && (
                         <tr key={`${m.id}-drawer`} className="border-t border-orange-500/10">
                           <td colSpan={3 + (expandedEpisodes.size > 0 ? episodes.reduce((acc, ep) => acc + (expandedEpisodes.has(ep) ? 5 : 1), 0) : episodes.length) + 1}
@@ -518,32 +507,37 @@ export default function ScoreboardPage() {
                                   const d = m.epDetails[ep];
                                   if (!d) return null;
 
-                                  // Get captain for this episode
                                   const epCaptainId = d.captainId;
                                   const epCaptain = epCaptainId ? survivorMap.get(epCaptainId) : null;
 
                                   // Build effective team for this episode.
-                                  // If chip 4 (Swap Out) was played, substitute swapped survivors.
+                                  // Chip 4 (Swap Out): permanent - swap_out_ids + swap_in_ids
+                                  // Chip 5 (Player Add): permanent + player_add_id (one extra slot)
                                   const isSwapEp = d.chipPlayed === 4 && d.swapOutIds.length > 0 && d.swapInIds.length > 0;
+                                  const isAddEp  = d.chipPlayed === 5 && d.playerAddId !== null;
                                   const effectiveTeamIds: string[] = isSwapEp
                                     ? [
                                         ...m.myTeam.filter(s => !d.swapOutIds.includes(s.id)).map(s => s.id),
                                         ...d.swapInIds,
                                       ]
+                                    : isAddEp
+                                    ? [...m.myTeam.map(s => s.id), d.playerAddId!]
                                     : m.myTeam.map(s => s.id);
 
-                                  // Build display rows — duplicates (e.g. all-Rick) get separate rows
+                                  // Build display rows — duplicates (e.g. all-Rick) get separate rows.
+                                  // For chip 5 doubling-up (added player already on permanent team),
+                                  // both slots render and both score independently — matches engine.
                                   const teamWithScores = effectiveTeamIds.map((sid, idx) => {
                                     const s = survivorMap.get(sid);
                                     if (!s) return null;
                                     const score = survivorScores.find(ss => ss.survivor_id === sid && ss.episode === ep);
                                     const isVotedOut = s.eliminated_episode === ep;
                                     const isCaptain = sid === epCaptainId;
-                                    const isSwappedIn = isSwapEp && d.swapInIds.includes(sid);
-                                    return { ...s, epPts: score?.final_points || 0, isVotedOut, isCaptain, isSwappedIn, rowKey: `${sid}-${idx}` };
-                                  }).filter(Boolean).sort((a, b) => b!.epPts - a!.epPts) as (Survivor & { epPts: number; isVotedOut: boolean; isCaptain: boolean; isSwappedIn: boolean; rowKey: string })[];
+                                    const isSwappedIn = isSwapEp && d.swapInIds.includes(sid) && idx >= m.myTeam.filter(t => !d.swapOutIds.includes(t.id)).length;
+                                    const isAddedIn = isAddEp && sid === d.playerAddId && idx === effectiveTeamIds.length - 1;
+                                    return { ...s, epPts: score?.final_points || 0, isVotedOut, isCaptain, isSwappedIn, isAddedIn, rowKey: `${sid}-${idx}` };
+                                  }).filter(Boolean).sort((a, b) => b!.epPts - a!.epPts) as (Survivor & { epPts: number; isVotedOut: boolean; isCaptain: boolean; isSwappedIn: boolean; isAddedIn: boolean; rowKey: string })[];
 
-                                  // All survivors eliminated this episode who are on this team
                                   const votedOutThisEp = teamWithScores.filter(s => s.isVotedOut);
 
                                   const tc = TRIBE_COLORS as Record<string, string>;
@@ -553,10 +547,11 @@ export default function ScoreboardPage() {
                                       style={{ minWidth: '200px', background: 'rgba(255,255,255,0.02)' }}>
                                         {/* Episode header */}
                                         <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]"
-                                          style={{ background: isSwapEp ? 'rgba(52,152,219,0.08)' : 'rgba(255,107,53,0.06)' }}>
+                                          style={{ background: isSwapEp ? 'rgba(52,152,219,0.08)' : isAddEp ? 'rgba(155,89,182,0.08)' : 'rgba(255,107,53,0.06)' }}>
                                           <div className="flex items-center gap-2">
                                             <span className="text-[11px] font-extrabold text-orange-400">E{ep}</span>
                                             {isSwapEp && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(52,152,219,0.15)', color: '#3498DB' }}>🔄 SWAP</span>}
+                                            {isAddEp && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(155,89,182,0.15)', color: '#9B59B6' }}>➕ ADD</span>}
                                           </div>
                                           <span className="text-[13px] font-extrabold text-white">{d.fantasy} pts</span>
                                         </div>
@@ -574,7 +569,11 @@ export default function ScoreboardPage() {
                                                   <div className="flex items-center gap-1.5 min-w-0">
                                                     <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: tc[s.tribe] || '#888' }} />
                                                     <span className="text-[11px] truncate" style={{
-                                                      color: s.isVotedOut ? '#E74C3C' : s.isCaptain ? '#FFD54F' : s.isSwappedIn ? '#3498DB' : 'rgba(255,255,255,0.6)',
+                                                      color: s.isVotedOut ? '#E74C3C'
+                                                        : s.isCaptain ? '#FFD54F'
+                                                        : s.isSwappedIn ? '#3498DB'
+                                                        : s.isAddedIn ? '#9B59B6'
+                                                        : 'rgba(255,255,255,0.6)',
                                                       textDecoration: s.isVotedOut ? 'none' : !s.is_active ? 'line-through' : 'none',
                                                     }}>
                                                       {s.name}
@@ -582,9 +581,10 @@ export default function ScoreboardPage() {
                                                     {s.isCaptain && <span className="text-[8px]">👑</span>}
                                                     {s.isVotedOut && <span className="text-[8px]">💀</span>}
                                                     {s.isSwappedIn && !s.isVotedOut && <span className="text-[7px] font-bold px-1 py-0.5 rounded" style={{ background: 'rgba(52,152,219,0.15)', color: '#3498DB' }}>NEW</span>}
+                                                    {s.isAddedIn && !s.isVotedOut && <span className="text-[7px] font-bold px-1 py-0.5 rounded" style={{ background: 'rgba(155,89,182,0.15)', color: '#9B59B6' }}>ADDED</span>}
                                                   </div>
-                                                  <span className="text-[11px] font-bold flex-shrink-0" style={{ color: s.epPts > 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)' }}>
-                                                    {s.epPts || '—'}
+                                                  <span className="text-[11px] font-bold flex-shrink-0" style={{ color: s.epPts !== 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)' }}>
+                                                    {s.epPts === 0 ? '—' : s.epPts}
                                                   </span>
                                                 </div>
                                               ))}
@@ -617,7 +617,6 @@ export default function ScoreboardPage() {
                                                 </div>
                                               ))
                                             ) : (
-                                              // Fallback: shouldn't normally hit, but just in case
                                               <div className="flex items-center justify-between">
                                                 <span className="text-[11px] text-white/50">Eliminated</span>
                                                 <span className="text-[11px] font-bold text-emerald-400">+{d.votedOut}</span>
@@ -656,7 +655,7 @@ export default function ScoreboardPage() {
           </div>
 
           <div className="mt-3 text-[10px] text-white/20">
-            Click a manager&apos;s name to expand episode detail cards. Click episode headers to show summary sub-columns. 👑 = captain 2x bonus · V.O. = voted out bonus · 🎰 = chip.
+            Click a manager&apos;s name to expand episode detail cards. Click episode headers to show summary sub-columns. 👑 = captain 2x bonus · V.O. = voted out bonus · 🎰 = chip · 🔄 SWAP = chip 4 played · ➕ ADD = chip 5 played.
           </div>
         </>
       )}
