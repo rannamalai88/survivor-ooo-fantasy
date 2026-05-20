@@ -94,6 +94,7 @@ export const CHIPS = [
 export const NAV_LINKS = [
   { href: '/', label: 'Home', icon: '🏠' },
   { href: '/picks', label: 'Picks', icon: '✅' },
+  { href: '/reveals', label: 'Reveals', icon: '🔓' },
   { href: '/leaderboard', label: 'Leaderboard', icon: '🏆' },
   { href: '/my-team', label: 'My Team', icon: '👥' },
   { href: '/scoreboard', label: 'Fantasy Scoring', icon: '📊' },
