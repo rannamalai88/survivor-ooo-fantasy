@@ -22,8 +22,26 @@ interface ExistingPick {
   submitted_at: string | null;
   is_locked: boolean;
 }
+interface ExistingQuinfecta {
+  place_20_id: string | null;
+  place_21_id: string | null;
+  place_22_id: string | null;
+  place_23_id: string | null;
+  place_24_id: string | null;
+  submitted_at: string | null;
+}
 
 const TC: Record<string, string> = TRIBE_COLORS;
+
+// Quinfecta slot definitions — index 0..4 maps to place 20..24.
+// Place 24 = Sole Survivor (winner) per league convention.
+const QUINFECTA_SLOTS = [
+  { idx: 0, place: 20, label: '20th place',                       points: 5,  color: '#1ABC9C' },
+  { idx: 1, place: 21, label: '21st place',                       points: 10, color: '#1ABC9C' },
+  { idx: 2, place: 22, label: '22nd place',                       points: 25, color: '#FFD54F' },
+  { idx: 3, place: 23, label: '23rd place (runner-up)',           points: 50, color: '#FF6B35' },
+  { idx: 4, place: 24, label: '24th — Sole Survivor 👑',          points: 50, color: '#FF6B35' },
+];
 
 const Av = ({ name, tribe, photoUrl, sz = 28 }: { name: string; tribe: string; photoUrl?: string | null; sz?: number }) => {
   const ini = name[0] === '"' ? 'Q' : name[0];
@@ -83,49 +101,31 @@ const TribeFilter = ({ value, onChange, tribes }: { value: string; onChange: (v:
 );
 
 // ============================================================
-// Swap Out Panel — shown when chip 4 is selected
+// Swap Out Panel (chip 4)
 // ============================================================
 function SwapOutPanel({
-  activeTeam,
-  allActiveSurvivors,
-  swapOuts,
-  swapIns,
-  onToggleSwapOut,
-  onSelectSwapIn,
-  onRemoveSwapIn,
-  isLocked,
-  tribes,
+  activeTeam, allActiveSurvivors, swapOuts, swapIns,
+  onToggleSwapOut, onSelectSwapIn, onRemoveSwapIn, isLocked, tribes,
 }: {
-  activeTeam: TeamMember[];
-  allActiveSurvivors: Survivor[];
-  swapOuts: string[];
-  swapIns: string[];
-  onToggleSwapOut: (id: string) => void;
-  onSelectSwapIn: (id: string) => void;
-  onRemoveSwapIn: (index: number) => void;
-  isLocked: boolean;
-  tribes: string[];
+  activeTeam: TeamMember[]; allActiveSurvivors: Survivor[];
+  swapOuts: string[]; swapIns: string[];
+  onToggleSwapOut: (id: string) => void; onSelectSwapIn: (id: string) => void;
+  onRemoveSwapIn: (index: number) => void; isLocked: boolean; tribes: string[];
 }) {
   const [swapFilter, setSwapFilter] = useState('All');
-
   const keepingIds = activeTeam.filter(m => !swapOuts.includes(m.id)).map(m => m.id);
   const resultingTeamIds = [...keepingIds, ...swapIns];
-
   const availableForSwapIn = allActiveSurvivors;
   const filteredAvailable = swapFilter === 'All' ? availableForSwapIn : availableForSwapIn.filter(s => s.tribe === swapFilter);
-
   const slotsOpen = swapOuts.length - swapIns.length;
 
   return (
     <div style={{ marginTop: '12px', background: 'rgba(52,152,219,0.04)', border: '1px solid rgba(52,152,219,0.2)', borderRadius: '12px', padding: '16px' }}>
-
       <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
         Your team — click to swap out
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
-        {activeTeam.length === 0 && (
-          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '12px', textAlign: 'center' }}>No active survivors on your team</div>
-        )}
+        {activeTeam.length === 0 && <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '12px', textAlign: 'center' }}>No active survivors on your team</div>}
         {activeTeam.map(member => {
           const isOut = swapOuts.includes(member.id);
           return (
@@ -136,75 +136,49 @@ function SwapOutPanel({
                 <div style={{ fontSize: '13px', fontWeight: 600, color: isOut ? 'rgba(255,255,255,0.4)' : '#fff', textDecoration: isOut ? 'line-through' : 'none' }}>{member.name}</div>
                 <div style={{ fontSize: '10px', fontWeight: 700, color: TC[member.tribe], letterSpacing: '1px' }}>{member.tribe.toUpperCase()}</div>
               </div>
-              <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px', background: isOut ? 'rgba(231,76,60,0.15)' : 'rgba(26,188,156,0.12)', color: isOut ? '#E74C3C' : '#1ABC9C' }}>
-                {isOut ? '🔄 OUT' : '✓ KEEPING'}
-              </span>
+              <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '6px', background: isOut ? 'rgba(231,76,60,0.15)' : 'rgba(26,188,156,0.12)', color: isOut ? '#E74C3C' : '#1ABC9C' }}>{isOut ? '🔄 OUT' : '✓ KEEPING'}</span>
             </div>
           );
         })}
       </div>
-
-      {swapOuts.length > 0 && (
-        <>
-          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
-            Swap pairs ({swapOuts.length} out · {swapIns.length} in)
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
-            {swapOuts.map((outId, i) => {
-              const outMember = activeTeam.find(m => m.id === outId);
-              const inId = swapIns[i];
-              const inSurvivor = inId ? allActiveSurvivors.find(s => s.id === inId) : null;
-              return (
-                <div key={outId} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
-                    {outMember && <Av name={outMember.name} tribe={outMember.tribe} photoUrl={outMember.photo_url} sz={22} />}
-                    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', textDecoration: 'line-through' }}>{outMember?.name || '?'}</span>
-                  </div>
-                  <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.2)' }}>→</span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
-                    {inSurvivor ? (
-                      <>
-                        <Av name={inSurvivor.name} tribe={inSurvivor.tribe} photoUrl={inSurvivor.photo_url} sz={22} />
-                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>{inSurvivor.name}</span>
-                        {!isLocked && (
-                          <button onClick={() => onRemoveSwapIn(i)}
-                            style={{ marginLeft: 'auto', fontSize: '10px', color: 'rgba(255,255,255,0.3)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>
-                            ✕
-                          </button>
-                        )}
-                      </>
-                    ) : (
-                      <span style={{ fontSize: '11px', color: 'rgba(255,107,53,0.6)', fontStyle: 'italic' }}>pick below ↓</span>
-                    )}
-                  </div>
+      {swapOuts.length > 0 && <>
+        <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>Swap pairs ({swapOuts.length} out · {swapIns.length} in)</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
+          {swapOuts.map((outId, i) => {
+            const outMember = activeTeam.find(m => m.id === outId);
+            const inId = swapIns[i];
+            const inSurvivor = inId ? allActiveSurvivors.find(s => s.id === inId) : null;
+            return (
+              <div key={outId} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                  {outMember && <Av name={outMember.name} tribe={outMember.tribe} photoUrl={outMember.photo_url} sz={22} />}
+                  <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', textDecoration: 'line-through' }}>{outMember?.name || '?'}</span>
                 </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-
-      {swapOuts.length > 0 && slotsOpen > 0 && (
-        <>
-          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
-            Swap in — select {slotsOpen} survivor{slotsOpen > 1 ? 's' : ''}
-          </div>
-          <TribeFilter value={swapFilter} onChange={setSwapFilter} tribes={tribes} />
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '260px', overflowY: 'auto', padding: '2px' }}>
-            {filteredAvailable.length === 0 ? (
-              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center', gridColumn: '1/-1' }}>No survivors available with this filter</div>
-            ) : filteredAvailable.map(s => (
-              <SurvivorOption key={s.id} s={s} selected={swapIns.includes(s.id)} onClick={() => !isLocked && onSelectSwapIn(s.id)} disabled={isLocked} />
-            ))}
-          </div>
-        </>
-      )}
-
+                <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.2)' }}>→</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                  {inSurvivor ? <>
+                    <Av name={inSurvivor.name} tribe={inSurvivor.tribe} photoUrl={inSurvivor.photo_url} sz={22} />
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>{inSurvivor.name}</span>
+                    {!isLocked && <button onClick={() => onRemoveSwapIn(i)} style={{ marginLeft: 'auto', fontSize: '10px', color: 'rgba(255,255,255,0.3)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px' }}>✕</button>}
+                  </> : <span style={{ fontSize: '11px', color: 'rgba(255,107,53,0.6)', fontStyle: 'italic' }}>pick below ↓</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </>}
+      {swapOuts.length > 0 && slotsOpen > 0 && <>
+        <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>Swap in — select {slotsOpen} survivor{slotsOpen > 1 ? 's' : ''}</div>
+        <TribeFilter value={swapFilter} onChange={setSwapFilter} tribes={tribes} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '260px', overflowY: 'auto', padding: '2px' }}>
+          {filteredAvailable.length === 0
+            ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center', gridColumn: '1/-1' }}>No survivors available with this filter</div>
+            : filteredAvailable.map(s => <SurvivorOption key={s.id} s={s} selected={swapIns.includes(s.id)} onClick={() => !isLocked && onSelectSwapIn(s.id)} disabled={isLocked} />)}
+        </div>
+      </>}
       {swapOuts.length > 0 && swapIns.length === swapOuts.length && (
         <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(52,152,219,0.06)', border: '1px solid rgba(52,152,219,0.2)', borderRadius: '8px' }}>
-          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(52,152,219,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
-            ✓ Your team this episode
-          </div>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(52,152,219,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>✓ Your team this episode</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
             {resultingTeamIds.map(id => {
               const s = allActiveSurvivors.find(x => x.id === id);
@@ -219,38 +193,23 @@ function SwapOutPanel({
               );
             })}
           </div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', marginTop: '8px', lineHeight: 1.4 }}>
-            This team scores for this episode only. Your permanent roster resumes next episode.
-          </div>
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', marginTop: '8px', lineHeight: 1.4 }}>This team scores for this episode only. Your permanent roster resumes next episode.</div>
         </div>
       )}
-
-      {swapOuts.length === 0 && (
-        <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>
-          Click a team member above to mark them for swapping
-        </div>
-      )}
+      {swapOuts.length === 0 && <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.2)', textAlign: 'center' }}>Click a team member above to mark them for swapping</div>}
     </div>
   );
 }
 
 // ============================================================
-// Player Add Panel — shown when chip 5 is selected
+// Player Add Panel (chip 5)
 // ============================================================
 function PlayerAddPanel({
-  activeTeam,
-  allActiveSurvivors,
-  selected,
-  onSelect,
-  isLocked,
-  tribes,
+  activeTeam, allActiveSurvivors, selected, onSelect, isLocked, tribes,
 }: {
-  activeTeam: TeamMember[];
-  allActiveSurvivors: Survivor[];
-  selected: string | null;
-  onSelect: (id: string | null) => void;
-  isLocked: boolean;
-  tribes: string[];
+  activeTeam: TeamMember[]; allActiveSurvivors: Survivor[];
+  selected: string | null; onSelect: (id: string | null) => void;
+  isLocked: boolean; tribes: string[];
 }) {
   const [filter, setFilter] = useState('All');
   const teamIds = useMemo(() => new Set(activeTeam.map(m => m.id)), [activeTeam]);
@@ -260,74 +219,127 @@ function PlayerAddPanel({
 
   return (
     <div style={{ marginTop: '12px', background: 'rgba(155,89,182,0.04)', border: '1px solid rgba(155,89,182,0.25)', borderRadius: '12px', padding: '16px' }}>
-
-      <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>
-        Pick an active survivor to add this episode
-      </div>
-      <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginBottom: '12px', lineHeight: 1.5 }}>
-        They score for you this episode only. Doubling up on someone already on your team is allowed — they&apos;ll score twice. Roster reverts next episode.
-      </div>
-
+      <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '8px' }}>Pick an active survivor to add this episode</div>
+      <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginBottom: '12px', lineHeight: 1.5 }}>They score for you this episode only. Doubling up on someone already on your team is allowed — they&apos;ll score twice. Roster reverts next episode.</div>
       <TribeFilter value={filter} onChange={setFilter} tribes={tribes} />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '6px', maxHeight: '280px', overflowY: 'auto', padding: '2px' }}>
-        {filtered.length === 0 ? (
-          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center', gridColumn: '1/-1' }}>No active survivors with this filter</div>
-        ) : filtered.map(s => {
-          const onTeam = teamIds.has(s.id);
-          const isSelected = selected === s.id;
+        {filtered.length === 0 ? <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', padding: '20px', textAlign: 'center', gridColumn: '1/-1' }}>No active survivors with this filter</div>
+          : filtered.map(s => {
+            const onTeam = teamIds.has(s.id);
+            const isSelected = selected === s.id;
+            return (
+              <div key={s.id} onClick={() => !isLocked && onSelect(isSelected ? null : s.id)}
+                style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: isSelected ? `${TC[s.tribe]}12` : 'rgba(255,255,255,0.02)', border: isSelected ? `1px solid ${TC[s.tribe]}50` : '1px solid rgba(255,255,255,0.04)', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', transition: 'all 0.2s' }}>
+                <Av name={s.name} tribe={s.tribe} photoUrl={s.photo_url} sz={28} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)' }}>{s.name}</span>
+                    {onTeam && <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px' }}>ON TEAM</span>}
+                  </div>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: TC[s.tribe], letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>
+                </div>
+                {isSelected && <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: TC[s.tribe], display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ color: '#fff', fontSize: '11px', fontWeight: 800 }}>✓</span></div>}
+              </div>
+            );
+          })}
+      </div>
+      {selectedSurvivor && (
+        <div style={{ marginTop: '14px', padding: '12px', background: 'rgba(155,89,182,0.08)', border: '1px solid rgba(155,89,182,0.25)', borderRadius: '8px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(155,89,182,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>✓ Adding for this episode</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <Av name={selectedSurvivor.name} tribe={selectedSurvivor.tribe} photoUrl={selectedSurvivor.photo_url} sz={24} />
+            <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>{selectedSurvivor.name}</span>
+            <span style={{ fontSize: '8px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(155,89,182,0.18)', color: '#9B59B6', letterSpacing: '0.5px' }}>NEW</span>
+            {isDoublingUp && <span style={{ fontSize: '10px', color: 'rgba(155,89,182,0.6)' }}>(doubling up — scores twice)</span>}
+          </div>
+          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', marginTop: '8px', lineHeight: 1.4 }}>Available as captain this episode if your privilege is still active. Reverts to your permanent roster next episode.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Quinfecta Panel (finale only)
+// ============================================================
+function QuinfectaPanel({
+  activeSurvivors, picks, onPick, isLocked,
+}: {
+  activeSurvivors: Survivor[];
+  picks: (string | null)[];
+  onPick: (slotIdx: number, survivorId: string | null) => void;
+  isLocked: boolean;
+}) {
+  return (
+    <>
+      <div style={{ marginBottom: '14px', padding: '12px', background: 'rgba(155,89,182,0.04)', border: '1px solid rgba(155,89,182,0.2)', borderRadius: '8px' }}>
+        <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+          Predict the exact finishing order of the final 5. <b style={{ color: '#fff' }}>Sequential scoring</b> — you only earn points for stages you get right <b>in order</b>. Miss one and you keep the highest tier reached.
+        </div>
+        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginTop: '6px', lineHeight: 1.5 }}>
+          Example: correct on 20th, 21st, 22nd but wrong on 23rd → 25 pts (not 5+10+25). Max possible: <b style={{ color: '#FFD54F' }}>50 pts</b>.
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        {QUINFECTA_SLOTS.map(slot => {
+          const selectedId = picks[slot.idx];
           return (
-            <div
-              key={s.id}
-              onClick={() => !isLocked && onSelect(isSelected ? null : s.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                padding: '10px 12px',
-                background: isSelected ? `${TC[s.tribe]}12` : 'rgba(255,255,255,0.02)',
-                border: isSelected ? `1px solid ${TC[s.tribe]}50` : '1px solid rgba(255,255,255,0.04)',
-                borderRadius: '10px',
-                cursor: isLocked ? 'default' : 'pointer',
-                transition: 'all 0.2s',
-              }}
-            >
-              <Av name={s.name} tribe={s.tribe} photoUrl={s.photo_url} sz={28} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: isSelected ? '#fff' : 'rgba(255,255,255,0.7)' }}>{s.name}</span>
-                  {onTeam && (
-                    <span style={{ fontSize: '8px', fontWeight: 700, padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)', letterSpacing: '0.5px' }}>ON TEAM</span>
+            <div key={slot.idx}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#fff' }}>{slot.label}</span>
+                  {selectedId && (
+                    <span style={{ fontSize: '9px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(26,188,156,0.12)', color: '#1ABC9C', letterSpacing: '0.5px' }}>✓ PICKED</span>
                   )}
                 </div>
-                <div style={{ fontSize: '10px', fontWeight: 700, color: TC[s.tribe], letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>
+                <span style={{ fontSize: '11px', fontWeight: 800, color: slot.color, padding: '2px 10px', borderRadius: '6px', background: `${slot.color}15`, border: `1px solid ${slot.color}30` }}>
+                  +{slot.points} pts
+                </span>
               </div>
-              {isSelected && (
-                <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: TC[s.tribe], display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ color: '#fff', fontSize: '11px', fontWeight: 800 }}>✓</span>
-                </div>
-              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(140px,1fr))', gap: '6px' }}>
+                {activeSurvivors.map(s => {
+                  const isSelected = selectedId === s.id;
+                  const usedElsewhere = picks.some((id, i) => i !== slot.idx && id === s.id);
+                  return (
+                    <SurvivorOption
+                      key={s.id}
+                      s={s}
+                      selected={isSelected}
+                      onClick={() => onPick(slot.idx, isSelected ? null : s.id)}
+                      disabled={isLocked || (usedElsewhere && !isSelected)}
+                    />
+                  );
+                })}
+              </div>
             </div>
           );
         })}
       </div>
 
-      {selectedSurvivor && (
-        <div style={{ marginTop: '14px', padding: '12px', background: 'rgba(155,89,182,0.08)', border: '1px solid rgba(155,89,182,0.25)', borderRadius: '8px' }}>
-          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(155,89,182,0.7)', textTransform: 'uppercase', marginBottom: '8px' }}>
-            ✓ Adding for this episode
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <Av name={selectedSurvivor.name} tribe={selectedSurvivor.tribe} photoUrl={selectedSurvivor.photo_url} sz={24} />
-            <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>{selectedSurvivor.name}</span>
-            <span style={{ fontSize: '8px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', background: 'rgba(155,89,182,0.18)', color: '#9B59B6', letterSpacing: '0.5px' }}>NEW</span>
-            {isDoublingUp && (
-              <span style={{ fontSize: '10px', color: 'rgba(155,89,182,0.6)' }}>(doubling up — scores twice)</span>
-            )}
-          </div>
-          <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', marginTop: '8px', lineHeight: 1.4 }}>
-            Available as captain this episode if your privilege is still active. Reverts to your permanent roster next episode.
+      {picks.every(p => p !== null) && (
+        <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(155,89,182,0.08)', border: '1px solid rgba(155,89,182,0.3)', borderRadius: '8px' }}>
+          <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(155,89,182,0.8)', textTransform: 'uppercase', marginBottom: '8px' }}>✓ Your predicted finishing order</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {QUINFECTA_SLOTS.map(slot => {
+              const id = picks[slot.idx];
+              const s = id ? activeSurvivors.find(x => x.id === id) : null;
+              if (!s) return null;
+              return (
+                <div key={slot.idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.4)', minWidth: '60px' }}>{slot.place === 24 ? '👑 Winner' : `${slot.place}th`}</span>
+                    <Av name={s.name} tribe={s.tribe} photoUrl={s.photo_url} sz={20} />
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#fff' }}>{s.name}</span>
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: 700, color: slot.color }}>+{slot.points}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -341,6 +353,7 @@ function PicksContent() {
   const [myTeam, setMyTeam] = useState<TeamMember[]>([]);
   const [allSurvivors, setAllSurvivors] = useState<Survivor[]>([]);
   const [existingPick, setExistingPick] = useState<ExistingPick | null>(null);
+  const [existingQuinfecta, setExistingQuinfecta] = useState<ExistingQuinfecta | null>(null);
   const [poolStatus, setPoolStatus] = useState<string>('active');
   const [usedPoolPicks, setUsedPoolPicks] = useState<string[]>([]);
   const [usedChips, setUsedChips] = useState<number[]>([]);
@@ -355,13 +368,12 @@ function PicksContent() {
   const [netPick, setNetPick] = useState<string | null>(null);
   const [chipPlay, setChipPlay] = useState<number | null>(null);
   const [chipTarget, setChipTarget] = useState<string | null>(null);
-
-  // Swap Out state (chip 4)
   const [swapOuts, setSwapOuts] = useState<string[]>([]);
   const [swapIns, setSwapIns] = useState<string[]>([]);
-
-  // Player Add state (chip 5)
   const [playerAdd, setPlayerAdd] = useState<string | null>(null);
+
+  // Quinfecta: index 0..4 maps to QUINFECTA_SLOTS[i].place
+  const [quinfectaPicks, setQuinfectaPicks] = useState<(string | null)[]>([null, null, null, null, null]);
 
   const [poolFilter, setPoolFilter] = useState('All');
   const [netFilter, setNetFilter] = useState('All');
@@ -401,6 +413,19 @@ function PicksContent() {
         setPlayerAdd(pickData.player_add_id || null);
       }
 
+      // Load existing quinfecta predictions if any
+      const { data: qData } = await supabase.from('quinfecta_predictions').select('*').eq('season_id', sid).eq('manager_id', manager.id).maybeSingle();
+      if (qData) {
+        setExistingQuinfecta(qData);
+        setQuinfectaPicks([
+          qData.place_20_id || null,
+          qData.place_21_id || null,
+          qData.place_22_id || null,
+          qData.place_23_id || null,
+          qData.place_24_id || null,
+        ]);
+      }
+
       const { data: poolData } = await supabase.from('pool_status').select('*').eq('season_id', sid).eq('manager_id', manager.id).maybeSingle();
       if (poolData) setPoolStatus(poolData.status || 'active');
 
@@ -436,7 +461,6 @@ function PicksContent() {
     tick(); const iv = setInterval(tick, 60000); return () => clearInterval(iv);
   }, [season]);
 
-  // If captain is being swapped out (chip 4), clear captain selection
   useEffect(() => {
     if (chipPlay === 4 && captain && swapOuts.includes(captain)) {
       setCaptain(null);
@@ -445,34 +469,25 @@ function PicksContent() {
 
   const currentEp = season?.current_episode || 1;
   const currentWeek = currentEp;
+  const totalEpisodes = season?.total_episodes || 13;
+  const isFinale = !!(season && season.current_episode === season.total_episodes);
+
   const tribes = useMemo(() => [...new Set(allSurvivors.map(s => s.tribe))].sort(), [allSurvivors]);
   const activeSurvivors = allSurvivors.filter(s => s.is_active);
   const activeTeam = myTeam.filter(s => s.is_active);
 
-  // Captain options reflect the effective team for the chosen chip:
-  // - chip 4 (Swap Out): permanent team minus swap-outs plus swap-ins
-  // - chip 5 (Player Add): permanent team plus the added survivor
-  // - otherwise: permanent active team
-  // Deduplicated by ID — same survivor in multiple roster slots only needs one captain entry.
   const captainOptions = useMemo(() => {
     let base: TeamMember[];
-
     if (chipPlay === 4) {
       const keeping = activeTeam.filter(m => !swapOuts.includes(m.id));
-      const swappedIn = swapIns
-        .map(id => allSurvivors.find(s => s.id === id))
-        .filter((s): s is Survivor => !!s)
-        .map(s => ({ ...s, is_team_active: true } as TeamMember));
+      const swappedIn = swapIns.map(id => allSurvivors.find(s => s.id === id)).filter((s): s is Survivor => !!s).map(s => ({ ...s, is_team_active: true } as TeamMember));
       base = [...keeping, ...swappedIn];
     } else if (chipPlay === 5 && playerAdd) {
       const added = allSurvivors.find(s => s.id === playerAdd);
-      base = added
-        ? [...activeTeam, { ...added, is_team_active: true } as TeamMember]
-        : activeTeam;
+      base = added ? [...activeTeam, { ...added, is_team_active: true } as TeamMember] : activeTeam;
     } else {
       base = activeTeam;
     }
-
     const seen = new Set<string>();
     return base.filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true; });
   }, [chipPlay, activeTeam, swapOuts, swapIns, playerAdd, allSurvivors]);
@@ -483,17 +498,17 @@ function PicksContent() {
   const availableChips = CHIPS.filter(c => { if (usedChips.includes(c.id)) return false; const [lo, hi] = c.window.replace('Week ', '').split('-').map(Number); return currentWeek >= lo && currentWeek <= hi; });
   const activeChipWindow = availableChips.length > 0;
 
-  // Validation
   const swapValid = chipPlay !== 4 || (swapOuts.length > 0 && swapOuts.length === swapIns.length);
   const playerAddValid = chipPlay !== 5 || playerAdd !== null;
+  const quinfectaValid = !isFinale || quinfectaPicks.every(p => p !== null);
   const picksComplete = (captainPrivilegeLost || captain !== null) &&
     (poolStatus !== 'active' || poolPick !== null) &&
     netPick !== null &&
     swapValid &&
-    playerAddValid;
+    playerAddValid &&
+    quinfectaValid;
   const isLocked = existingPick?.is_locked || isPastDeadline;
 
-  // Swap handlers
   function handleToggleSwapOut(survivorId: string) {
     if (swapOuts.includes(survivorId)) {
       const idx = swapOuts.indexOf(survivorId);
@@ -503,19 +518,12 @@ function PicksContent() {
       setSwapOuts(prev => [...prev, survivorId]);
     }
   }
-
   function handleSelectSwapIn(survivorId: string) {
-    if (swapIns.length < swapOuts.length) {
-      setSwapIns(prev => [...prev, survivorId]);
-    }
+    if (swapIns.length < swapOuts.length) setSwapIns(prev => [...prev, survivorId]);
   }
-
   function handleRemoveSwapIn(index: number) {
     setSwapIns(prev => prev.filter((_, i) => i !== index));
   }
-
-  // Player Add handler — clears captain if it was the previously-added player
-  // and that player isn't on the permanent team.
   function handleSelectPlayerAdd(newId: string | null) {
     const prev = playerAdd;
     if (prev && prev !== newId && captain === prev) {
@@ -523,6 +531,9 @@ function PicksContent() {
       if (!onPermanentTeam) setCaptain(null);
     }
     setPlayerAdd(newId);
+  }
+  function handleQuinfectaPick(slotIdx: number, survivorId: string | null) {
+    setQuinfectaPicks(prev => prev.map((v, i) => i === slotIdx ? survivorId : v));
   }
 
   async function savePicks() {
@@ -549,6 +560,24 @@ function PicksContent() {
       else { const { error } = await supabase.from('weekly_picks').insert(row); if (error) throw error; }
       await supabase.from('chips_used').delete().eq('season_id', season.id).eq('manager_id', manager.id).eq('episode', currentEp);
       if (chipPlay) { await supabase.from('chips_used').insert({ season_id: season.id, manager_id: manager.id, chip_id: chipPlay, episode: currentEp, target: chipTarget }); }
+
+      // Save Quinfecta predictions if finale
+      if (isFinale) {
+        const qRow = {
+          season_id: season.id,
+          manager_id: manager.id,
+          place_20_id: quinfectaPicks[0],
+          place_21_id: quinfectaPicks[1],
+          place_22_id: quinfectaPicks[2],
+          place_23_id: quinfectaPicks[3],
+          place_24_id: quinfectaPicks[4],
+          submitted_at: existingQuinfecta?.submitted_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const { error: qErr } = await supabase.from('quinfecta_predictions').upsert(qRow, { onConflict: 'season_id,manager_id' });
+        if (qErr) throw qErr;
+      }
+
       setSaveMessage('Picks submitted! You can update them until the deadline.');
       await loadData();
     } catch (err: any) { setSaveMessage(`Error: ${err.message || 'Could not save'}`); }
@@ -567,18 +596,16 @@ function PicksContent() {
     <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8e8', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       <div style={{ maxWidth: '540px', margin: '0 auto', padding: '20px 16px 100px' }}>
 
-        {/* Header */}
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
             <Flame />
             <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: '#fff' }}>Weekly Picks</h1>
             <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: 'rgba(255,107,53,0.1)', color: '#FF6B35', border: '1px solid rgba(255,107,53,0.2)' }}>EP. {currentEp}</span>
+            {isFinale && <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: 'rgba(155,89,182,0.15)', color: '#9B59B6', border: '1px solid rgba(155,89,182,0.3)', letterSpacing: '1px' }}>🏆 FINALE</span>}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px' }}>
             <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>Due: {deadlineStr}</span>
-            <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: isPastDeadline ? 'rgba(255,80,80,0.1)' : 'rgba(255,215,0,0.08)', color: isPastDeadline ? '#FF5050' : '#FFD54F' }}>
-              {isPastDeadline ? '🔒 LOCKED' : `⏱ ${timeLeft}`}
-            </span>
+            <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: isPastDeadline ? 'rgba(255,80,80,0.1)' : 'rgba(255,215,0,0.08)', color: isPastDeadline ? '#FF5050' : '#FFD54F' }}>{isPastDeadline ? '🔒 LOCKED' : `⏱ ${timeLeft}`}</span>
           </div>
         </div>
 
@@ -586,8 +613,7 @@ function PicksContent() {
         {existingPick && !saveMessage && <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '14px', fontSize: '12px', background: 'rgba(26,188,156,0.06)', border: '1px solid rgba(26,188,156,0.15)', color: 'rgba(26,188,156,0.7)' }}>✅ Picks submitted — you can update until the deadline</div>}
 
         {/* ── CAPTAIN ── */}
-        <Section
-          title="Captain Designation" icon="👑"
+        <Section title="Captain Designation" icon="👑"
           badge={captainPrivilegeLost ? 'PRIVILEGE LOST' : captain ? 'SELECTED' : 'REQUIRED'}
           badgeColor={captainPrivilegeLost ? '#95a5a6' : captain ? '#1ABC9C' : '#FFD54F'}>
           {captainPrivilegeLost ? (
@@ -660,10 +686,7 @@ function PicksContent() {
                 setChipTarget(null);
                 if (next !== 4) { setSwapOuts([]); setSwapIns([]); }
                 if (next !== 5) {
-                  // Clear captain if it was the added player and not on permanent team
-                  if (playerAdd && captain === playerAdd && !activeTeam.some(m => m.id === playerAdd)) {
-                    setCaptain(null);
-                  }
+                  if (playerAdd && captain === playerAdd && !activeTeam.some(m => m.id === playerAdd)) setCaptain(null);
                   setPlayerAdd(null);
                 }
               }}
@@ -679,7 +702,6 @@ function PicksContent() {
               </div>
             ))}
 
-            {/* Assistant Manager target picker */}
             {chipPlay === 1 && (
               <div style={{ background: 'rgba(255,215,0,0.04)', border: '1px solid rgba(255,215,0,0.15)', borderRadius: '10px', padding: '14px', marginTop: '8px' }}>
                 <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', margin: '0 0 10px' }}>Select which manager&apos;s team to copy:</p>
@@ -694,47 +716,10 @@ function PicksContent() {
               </div>
             )}
 
-            {/* Swap Out panel */}
-            {chipPlay === 4 && (
-              <SwapOutPanel
-                activeTeam={activeTeam}
-                allActiveSurvivors={activeSurvivors}
-                swapOuts={swapOuts}
-                swapIns={swapIns}
-                onToggleSwapOut={handleToggleSwapOut}
-                onSelectSwapIn={handleSelectSwapIn}
-                onRemoveSwapIn={handleRemoveSwapIn}
-                isLocked={isLocked}
-                tribes={tribes}
-              />
-            )}
-
-            {/* Swap Out validation hint */}
-            {chipPlay === 4 && swapOuts.length > 0 && swapOuts.length > swapIns.length && (
-              <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,107,53,0.6)', textAlign: 'center' }}>
-                ⚠ Select {swapOuts.length - swapIns.length} more survivor{swapOuts.length - swapIns.length > 1 ? 's' : ''} to swap in
-              </div>
-            )}
-
-            {/* Player Add panel */}
-            {chipPlay === 5 && (
-              <PlayerAddPanel
-                activeTeam={activeTeam}
-                allActiveSurvivors={activeSurvivors}
-                selected={playerAdd}
-                onSelect={handleSelectPlayerAdd}
-                isLocked={isLocked}
-                tribes={tribes}
-              />
-            )}
-
-            {/* Player Add validation hint */}
-            {chipPlay === 5 && !playerAdd && (
-              <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(155,89,182,0.65)', textAlign: 'center' }}>
-                ⚠ Pick a survivor to add this episode
-              </div>
-            )}
-
+            {chipPlay === 4 && <SwapOutPanel activeTeam={activeTeam} allActiveSurvivors={activeSurvivors} swapOuts={swapOuts} swapIns={swapIns} onToggleSwapOut={handleToggleSwapOut} onSelectSwapIn={handleSelectSwapIn} onRemoveSwapIn={handleRemoveSwapIn} isLocked={isLocked} tribes={tribes} />}
+            {chipPlay === 4 && swapOuts.length > 0 && swapOuts.length > swapIns.length && <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(255,107,53,0.6)', textAlign: 'center' }}>⚠ Select {swapOuts.length - swapIns.length} more survivor{swapOuts.length - swapIns.length > 1 ? 's' : ''} to swap in</div>}
+            {chipPlay === 5 && <PlayerAddPanel activeTeam={activeTeam} allActiveSurvivors={activeSurvivors} selected={playerAdd} onSelect={handleSelectPlayerAdd} isLocked={isLocked} tribes={tribes} />}
+            {chipPlay === 5 && !playerAdd && <div style={{ marginTop: '8px', fontSize: '11px', color: 'rgba(155,89,182,0.65)', textAlign: 'center' }}>⚠ Pick a survivor to add this episode</div>}
           </>) : (<>
             <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.2)', margin: '0 0 10px' }}>No chip available this week.</p>
             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
@@ -744,6 +729,22 @@ function PicksContent() {
             </div>
           </>)}
         </Section>
+
+        {/* ── QUINFECTA (FINALE ONLY) ── */}
+        {isFinale && (
+          <Section
+            title="Quinfecta — Finale Predictions"
+            icon="🎯"
+            badge={quinfectaPicks.every(p => p !== null) ? 'COMPLETE' : 'REQUIRED'}
+            badgeColor={quinfectaPicks.every(p => p !== null) ? '#1ABC9C' : '#9B59B6'}>
+            <QuinfectaPanel
+              activeSurvivors={activeSurvivors}
+              picks={quinfectaPicks}
+              onPick={handleQuinfectaPick}
+              isLocked={isLocked}
+            />
+          </Section>
+        )}
 
         {/* ── SUBMIT ── */}
         <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(transparent,#0a0a0f 20%)', padding: '20px 0 10px', marginTop: '8px' }}>
@@ -758,6 +759,7 @@ function PicksContent() {
               {!netPick && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ NET</span>}
               {chipPlay === 4 && !swapValid && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Complete your swap</span>}
               {chipPlay === 5 && !playerAddValid && <span style={{ fontSize: '10px', color: 'rgba(255,107,53,0.5)' }}>⚠ Pick a player to add</span>}
+              {isFinale && !quinfectaValid && <span style={{ fontSize: '10px', color: 'rgba(155,89,182,0.7)' }}>⚠ Quinfecta — pick all 5</span>}
             </div>
           )}
         </div>
