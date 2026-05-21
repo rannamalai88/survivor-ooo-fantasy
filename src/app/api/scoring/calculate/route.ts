@@ -51,6 +51,13 @@ export async function POST(request: NextRequest) {
       .select('id, name, is_active, eliminated_episode, elimination_order')
       .eq('season_id', seasonId);
 
+    // Build score lookup — fsgPoints, manualAdjustment, votedOutBonus kept separate.
+    //
+    // The Sole Survivor doesn't earn the voted-out bonus the usual way (she was
+    // never voted out — elimination_order is NULL). At the finale run she gets
+    // the equivalent "outlasted everyone" bonus of 24 points, treated as a
+    // voted-out bonus so it flows through captain 2x and chip multipliers the
+    // same way every other voted-out bonus does.
     const survivorEpScores: Record<
       string,
       { fsgPoints: number; manualAdjustment: number; votedOutBonus: number; isNewlyEliminated: boolean }
@@ -58,7 +65,14 @@ export async function POST(request: NextRequest) {
     for (const s of episodeScores) {
       const survivor = survivors?.find((sv) => sv.id === s.survivor_id);
       const isNewlyEliminated = survivor?.eliminated_episode === episode;
-      const votedOutBonus = isNewlyEliminated ? survivor?.elimination_order || 0 : 0;
+
+      let votedOutBonus = isNewlyEliminated ? survivor?.elimination_order || 0 : 0;
+      if (isFinaleRun && survivor?.is_active === true) {
+        // Sole Survivor outlasted everyone — bonus equivalent to a 24th-place
+        // voted-out bonus. Downstream this gets the captain 2x treatment, the
+        // chip multipliers (Team Boost 3x, Super Captain 4x), etc.
+        votedOutBonus = 24;
+      }
 
       survivorEpScores[s.survivor_id] = {
         fsgPoints: s.fsg_points || 0,
@@ -249,7 +263,7 @@ export async function POST(request: NextRequest) {
 
     // ----------------------------------------------------------------
     // 10c. POOL STATUS — canonical recomputation from picks history.
-    // Adds an "active → finished" transition at season's end.
+    // At season's end, any pool-active manager transitions to 'finished'.
     // ----------------------------------------------------------------
     const { data: allMgrPicksHistory } = await supabase
       .from('weekly_picks')
@@ -280,9 +294,6 @@ export async function POST(request: NextRequest) {
     for (const mgr of managers) {
       const existing = existingStatusByMgr[mgr.id];
       if (existing === 'burnt') continue;
-      // Note: 'finished' is NOT preserved on its own; we recompute it from
-      // scratch every run. If a manager was marked finished but data changes
-      // mean they shouldn't be, the recomputation corrects it.
 
       const mgrPicks = picksByMgrEp[mgr.id] || {};
       let status: 'active' | 'drowned' = 'active';
@@ -324,8 +335,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // At season's end, any pool-active manager has "finished" the pool —
-      // they survived every round and earned the max pool score.
       let finalStatus: 'active' | 'drowned' | 'finished' = status;
       if (isFinaleRun && status === 'active') {
         finalStatus = 'finished';
@@ -433,14 +442,11 @@ export async function POST(request: NextRequest) {
 
       // ── Sole Survivor bonus ──
       // +15 to managers with the winner on their PERMANENT (drafted) team.
-      // Doesn't count chip 5 "Player Add" adds.
+      // Chip 5 "Player Add" does not qualify.
       const soleSurvivorBonus = soleSurvivorManagers.has(mgr.id)
         ? SOLE_SURVIVOR_BONUS
         : 0;
 
-      // Sole survivor adds onto whatever calculateGrandTotal returns. Keeping
-      // it outside the function avoids touching the scoring.ts signature; this
-      // stays a simple additive bonus.
       const grandTotal =
         calculateGrandTotal(fantasyTotal, poolScore, quinfectaScore, netTotal)
         + soleSurvivorBonus;
