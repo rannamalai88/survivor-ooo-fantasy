@@ -6,6 +6,7 @@ import {
   calculatePoolScore,
   calculateNETTotal,
   calculateGrandTotal,
+  calculateQuinfectaScore,
 } from '@/lib/scoring';
 
 export async function POST(request: NextRequest) {
@@ -19,17 +20,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing episode or seasonId' }, { status: 400 });
     }
 
-    // 0. Get season info — need total_episodes for the pool formula
+    // 0. Season info
     const { data: seasonData } = await supabase
       .from('seasons')
       .select('total_episodes')
       .eq('id', seasonId)
       .single();
 
-    // Pool runs from episode 2 through the finale, so total pool weeks = total_episodes - 1
-    const totalWeeks = (seasonData?.total_episodes || 13) - 1;
+    const totalEpisodes = seasonData?.total_episodes || 13;
+    const totalWeeks = totalEpisodes - 1;
 
-    // 1. Get survivor scores for this episode
+    // 1. Survivor scores for this episode
     const { data: episodeScores } = await supabase
       .from('survivor_scores')
       .select('survivor_id, fsg_points, manual_adjustment')
@@ -43,17 +44,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Get survivor elimination info for voted-out bonus
+    // 2. Survivor metadata (used for voted-out bonus + quinfecta actuals)
     const { data: survivors } = await supabase
       .from('survivors')
       .select('id, name, is_active, eliminated_episode, elimination_order')
       .eq('season_id', seasonId);
 
-    // Build score lookup. fsgPoints, manualAdjustment, and votedOutBonus are
-    // kept SEPARATE so the scoring engine can apply each one according to the
-    // right rule:
-    //   - fsgPoints + votedOutBonus  → multiplied by captain 2x and chip multipliers
-    //   - manualAdjustment           → flat per-roster-slot, never multiplied
+    // Build score lookup — fsgPoints, manualAdjustment, votedOutBonus kept separate
     const survivorEpScores: Record<
       string,
       { fsgPoints: number; manualAdjustment: number; votedOutBonus: number; isNewlyEliminated: boolean }
@@ -71,7 +68,7 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // 3. Get managers
+    // 3. Managers
     const { data: managers } = await supabase
       .from('managers')
       .select('id, name')
@@ -80,7 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No managers found' }, { status: 500 });
     }
 
-    // 4. Get active team members for each manager
+    // 4. Active team members
     const { data: teams } = await supabase
       .from('teams')
       .select('manager_id, survivor_id')
@@ -93,7 +90,7 @@ export async function POST(request: NextRequest) {
       managerTeams[t.manager_id].push(t.survivor_id);
     }
 
-    // 5. Get weekly picks (incl. swap_out_ids, swap_in_ids, player_add_id)
+    // 5. Weekly picks for this episode
     const { data: weeklyPicks } = await supabase
       .from('weekly_picks')
       .select('manager_id, captain_id, chip_played, chip_target, net_pick_id, pool_pick_id, pool_backdoor_id, swap_out_ids, swap_in_ids, player_add_id')
@@ -105,7 +102,7 @@ export async function POST(request: NextRequest) {
       picksByManager[p.manager_id] = p;
     }
 
-    // 6. Check captain privilege — permanently lost if captain eliminated in any prior episode
+    // 6. Captain privilege state
     const { data: prevManagerScores } = await supabase
       .from('manager_scores')
       .select('manager_id, captain_lost')
@@ -117,9 +114,7 @@ export async function POST(request: NextRequest) {
       if (ps.captain_lost) captainPrivilegeLost.add(ps.manager_id);
     }
 
-    // ----------------------------------------------------------------
-    // 7b. Apply Swap Out (chip 4) or Player Add (chip 5) — build effectiveTeams.
-    // ----------------------------------------------------------------
+    // 7b. Effective teams (chip 4 swap / chip 5 add)
     const effectiveTeams: Record<string, string[]> = {};
     for (const mgr of managers) {
       const baseteam = managerTeams[mgr.id] || [];
@@ -152,9 +147,7 @@ export async function POST(request: NextRequest) {
       .eq('episode', episode)
       .maybeSingle();
 
-    // ----------------------------------------------------------------
-    // 8. FIRST PASS — base fantasy score (chipPlayed: null) for every manager.
-    // ----------------------------------------------------------------
+    // 8. FIRST PASS — base fantasy (no chips), used as Chip 1 target score
     const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
       const team = effectiveTeams[mgr.id] || [];
@@ -172,9 +165,7 @@ export async function POST(request: NextRequest) {
       managerBaseFantasy[mgr.id] = result.fantasyPoints;
     }
 
-    // ----------------------------------------------------------------
-    // 9. SECOND PASS — full calculation including chip effects.
-    // ----------------------------------------------------------------
+    // 9. SECOND PASS — full calc with chips
     const resultRows: any[] = [];
 
     for (const mgr of managers) {
@@ -187,10 +178,7 @@ export async function POST(request: NextRequest) {
         const targetMgr =
           managers.find((m) => m.id === picks.chip_target) ||
           managers.find((m) => m.name.toLowerCase() === picks.chip_target.toLowerCase());
-
-        if (targetMgr) {
-          assistantTargetScore = managerBaseFantasy[targetMgr.id];
-        }
+        if (targetMgr) assistantTargetScore = managerBaseFantasy[targetMgr.id];
       }
 
       const result = calculateManagerFantasy({
@@ -234,9 +222,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Save failed: ${upsertErr.message}` }, { status: 500 });
     }
 
-    // ----------------------------------------------------------------
-    // 10b. Record chips played in chips_used (idempotent)
-    // ----------------------------------------------------------------
+    // 10b. chips_used (idempotent)
     for (const row of resultRows) {
       if (!row.chip_played) continue;
       const picks = picksByManager[row.manager_id];
@@ -262,27 +248,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 10c. POOL STATUS — canonical recomputation (idempotent).
-    //
-    // Replaces the prior incremental logic which over-counted weeks_survived
-    // for any manager with a drown→reactivate cycle when Calculate was run
-    // multiple times. Each Calculate run now produces the same canonical
-    // state regardless of how many times it has been invoked.
-    //
-    // For each manager, walk every episode 2..episode in order from a clean
-    // slate, replaying their pool_pick / pool_backdoor history:
-    //
-    //   active + pool_pick survives             → weeks_survived += 1
-    //   active + pool_pick eliminated this ep   → status = drowned, drowned_ep = ep
-    //   drowned + correct backdoor for this ep  → status = active (NO weeks credit)
-    //   drowned + wrong/no backdoor             → stays drowned
-    //   active + no pool_pick                   → unchanged (auto-elim not enforced)
-    //
-    // 'burnt' and 'finished' statuses are preserved if already set — those
-    // are admin/end-of-season states that this function does not manage.
+    // 10c. POOL STATUS — canonical recomputation from picks history
     // ----------------------------------------------------------------
-
-    // Pull every manager's complete pool history from E2..episode
     const { data: allMgrPicksHistory } = await supabase
       .from('weekly_picks')
       .select('manager_id, episode, pool_pick_id, pool_backdoor_id')
@@ -299,7 +266,6 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // Read existing statuses to preserve 'burnt' / 'finished'
     const { data: existingPoolStatuses } = await supabase
       .from('pool_status')
       .select('manager_id, status')
@@ -311,7 +277,6 @@ export async function POST(request: NextRequest) {
     }
 
     for (const mgr of managers) {
-      // Skip managers in admin-set states — leave their data alone
       const existing = existingStatusByMgr[mgr.id];
       if (existing === 'burnt' || existing === 'finished') continue;
 
@@ -339,10 +304,7 @@ export async function POST(request: NextRequest) {
               weeksSurvived += 1;
             }
           }
-          // No pool_pick + active → no change. (Auto-elimination for missing
-          // picks is not enforced here; that would be a separate policy.)
         } else {
-          // drowned — check this ep's backdoor
           if (pick?.pool_backdoor_id) {
             const survivor = survivors?.find((s) => s.id === pick.pool_backdoor_id);
             const guessedCorrectly =
@@ -353,8 +315,6 @@ export async function POST(request: NextRequest) {
             if (guessedCorrectly) {
               status = 'active';
               drownedEpisode = null;
-              // Reactivation episode does NOT count toward weeks_survived
-              // — the manager sat out this episode while drowned.
             }
           }
         }
@@ -372,7 +332,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 11. Recalculate manager_totals
+    // ----------------------------------------------------------------
+    // 10d. QUINFECTA ACTUALS — build once for use in section 11.
+    //
+    //   place 20–23 → survivor with that elimination_order
+    //   place 24    → Sole Survivor (is_active=true). Falls back to
+    //                 elimination_order=24 for backward compatibility
+    //                 if a season uses the alternate convention.
+    // ----------------------------------------------------------------
+    const quinfectaActuals: { place: number; survivorId: string }[] = [];
+    for (const place of [20, 21, 22, 23]) {
+      const s = survivors?.find(sv => sv.elimination_order === place);
+      if (s) quinfectaActuals.push({ place, survivorId: s.id });
+    }
+    const winner = survivors?.find(sv => sv.is_active === true)
+                ?? survivors?.find(sv => sv.elimination_order === 24);
+    if (winner) quinfectaActuals.push({ place: 24, survivorId: winner.id });
+
+    // ----------------------------------------------------------------
+    // 11. Recalculate manager_totals (fantasy + pool + quinfecta + NET)
+    // ----------------------------------------------------------------
     for (const mgr of managers) {
       const { data: allEpScores } = await supabase
         .from('manager_scores')
@@ -381,8 +360,7 @@ export async function POST(request: NextRequest) {
         .eq('manager_id', mgr.id);
 
       const fantasyTotal = (allEpScores || []).reduce(
-        (s, r) => s + (r.fantasy_points || 0),
-        0
+        (s, r) => s + (r.fantasy_points || 0), 0
       );
       const netCorrectCount = (allEpScores || []).filter((r) => r.net_correct).length;
       const netTotal = calculateNETTotal(netCorrectCount);
@@ -411,7 +389,31 @@ export async function POST(request: NextRequest) {
         topFantasy
       );
 
-      const grandTotal = calculateGrandTotal(fantasyTotal, poolScore, 0, netTotal);
+      // ── Quinfecta score ──
+      // Always computed (idempotent). If predictions or actuals are missing
+      // the score is simply 0. Once finale data is set + predictions are
+      // submitted, it becomes meaningful.
+      let quinfectaScore = 0;
+      const { data: qPred } = await supabase
+        .from('quinfecta_predictions')
+        .select('place_20_id, place_21_id, place_22_id, place_23_id, place_24_id')
+        .eq('season_id', seasonId)
+        .eq('manager_id', mgr.id)
+        .maybeSingle();
+
+      if (qPred && quinfectaActuals.length > 0) {
+        const predictions = [
+          { place: 20, survivorId: qPred.place_20_id },
+          { place: 21, survivorId: qPred.place_21_id },
+          { place: 22, survivorId: qPred.place_22_id },
+          { place: 23, survivorId: qPred.place_23_id },
+          { place: 24, survivorId: qPred.place_24_id },
+        ].filter((p): p is { place: number; survivorId: string } => !!p.survivorId);
+
+        quinfectaScore = calculateQuinfectaScore(predictions, quinfectaActuals);
+      }
+
+      const grandTotal = calculateGrandTotal(fantasyTotal, poolScore, quinfectaScore, netTotal);
 
       await supabase.from('manager_totals').upsert(
         {
@@ -419,7 +421,7 @@ export async function POST(request: NextRequest) {
           manager_id: mgr.id,
           fantasy_total: fantasyTotal,
           pool_score: poolScore,
-          quinfecta_score: 0,
+          quinfecta_score: quinfectaScore,
           net_total: netTotal,
           grand_total: grandTotal,
           updated_at: new Date().toISOString(),
