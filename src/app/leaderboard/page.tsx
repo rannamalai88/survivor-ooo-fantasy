@@ -13,6 +13,7 @@ interface ManagerTotal {
   pool_score: number;
   quinfecta_score: number;
   net_total: number;
+  sole_survivor_bonus: number;
   grand_total: number;
   rank: number;
 }
@@ -116,7 +117,6 @@ export default function LeaderboardPage() {
         supabase.from('manager_scores').select('*').eq('season_id', SEASON_ID).order('episode'),
         supabase.from('pool_status').select('manager_id, status, weeks_survived').eq('season_id', SEASON_ID),
         supabase.from('teams').select('manager_id, is_active, survivors(id, name, tribe, is_active)').eq('season_id', SEASON_ID).eq('is_active', true),
-        // Fetch all captain picks to determine most recent captain + active status
         supabase.from('weekly_picks').select('manager_id, episode, captain_id').eq('season_id', SEASON_ID).not('captain_id', 'is', null).order('episode', { ascending: false }),
       ]);
 
@@ -142,27 +142,21 @@ export default function LeaderboardPage() {
     }
   }
 
-  // ---- Derive captain info per manager ----
-  // Most recent weekly pick's captain_id → look up in teamData to get name + active status
   const captainInfo = useMemo(() => {
     const info: Record<string, { name: string; isActive: boolean }> = {};
-    // captainPicks is sorted desc by episode, so first match = most recent
     captainPicks.forEach(pick => {
-      if (info[pick.manager_id]) return; // already have their most recent
+      if (info[pick.manager_id]) return;
       if (!pick.captain_id) return;
-      // Find this survivor in teamData
       const survivor = teamData.find(t => t.manager_id === pick.manager_id && t.survivor_id === pick.captain_id);
       if (survivor) {
         info[pick.manager_id] = { name: survivor.survivor_name, isActive: survivor.is_active };
       } else {
-        // Survivor not in active teams (voted out and removed) — captain lost
         info[pick.manager_id] = { name: '—', isActive: false };
       }
     });
     return info;
   }, [captainPicks, teamData]);
 
-  // ---- Enriched manager data ----
   const enriched = useMemo(() => {
     return managers.map((m) => {
       const t = totals.find((t) => t.manager_id === m.id);
@@ -177,6 +171,7 @@ export default function LeaderboardPage() {
         pool_score: t?.pool_score || 0,
         quinfecta_score: t?.quinfecta_score || 0,
         net_total: t?.net_total || 0,
+        sole_survivor_bonus: t?.sole_survivor_bonus || 0,
         grand_total: t?.grand_total || 0,
         rank: t?.rank || 0,
         pool_status: ps?.status || 'active',
@@ -188,7 +183,6 @@ export default function LeaderboardPage() {
     });
   }, [managers, totals, poolStatuses, teamData, captainInfo]);
 
-  // ---- Sorted ----
   const sorted = useMemo(() => {
     const arr = [...enriched];
     arr.sort((a, b) => ((b as any)[sortKey] || 0) - ((a as any)[sortKey] || 0));
@@ -196,7 +190,6 @@ export default function LeaderboardPage() {
     return arr;
   }, [enriched, sortKey]);
 
-  // ---- Min/Max for heat mapping ----
   const stats = useMemo(() => {
     const vals = (key: string) => sorted.map((m) => (m as any)[key] || 0);
     return {
@@ -211,7 +204,6 @@ export default function LeaderboardPage() {
     return Array.from(new Set(epScores.map((s) => s.episode))).sort((a, b) => a - b);
   }, [epScores]);
 
-  // ---- Couples data ----
   const couplesData = useMemo(() => {
     return COUPLES.map((c) => {
       const m1 = enriched.find((m) => m.name === c.members[0]);
@@ -226,12 +218,12 @@ export default function LeaderboardPage() {
         pool:     (m1?.pool_score || 0) + (m2?.pool_score || 0),
         quinfecta:(m1?.quinfecta_score || 0) + (m2?.quinfecta_score || 0),
         net:      (m1?.net_total || 0) + (m2?.net_total || 0),
+        sole:     (m1?.sole_survivor_bonus || 0) + (m2?.sole_survivor_bonus || 0),
         rank: 0,
       };
     }).sort((a, b) => b.combined - a.combined).map((c, i) => ({ ...c, rank: i + 1 }));
   }, [enriched]);
 
-  // ---- Render ----
   if (loading) {
     return (
       <div className="max-w-5xl mx-auto px-4 py-12 text-center">
@@ -253,7 +245,6 @@ export default function LeaderboardPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6">
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <div>
           <h1 className="text-xl font-extrabold text-white tracking-wider">🏆 Leaderboard</h1>
@@ -270,7 +261,6 @@ export default function LeaderboardPage() {
         </div>
       </div>
 
-      {/* ======== INDIVIDUAL VIEW ======== */}
       {view === 'individual' && (
         <>
           {/* Top 3 Cards */}
@@ -283,7 +273,15 @@ export default function LeaderboardPage() {
                   <div className="text-3xl mb-1">{medals[i]}</div>
                   <div className="text-base font-extrabold text-white">{m.name}</div>
                   <div className="text-2xl font-extrabold mt-1" style={{ color: i === 0 ? '#FFD54F' : '#fff' }}>{Math.round(m.grand_total)}</div>
-                  <div className="text-[10px] text-white/25 mt-1">F:{m.fantasy_total} · P:{Math.round(m.pool_score)} · N:{m.net_total}</div>
+                  <div className="text-[10px] text-white/25 mt-1">
+                    F:{m.fantasy_total} · P:{Math.round(m.pool_score)} · N:{m.net_total}
+                    {m.quinfecta_score > 0 && <> · Q:{m.quinfecta_score}</>}
+                  </div>
+                  {m.sole_survivor_bonus > 0 && (
+                    <div className="text-[9px] font-bold mt-1" style={{ color: '#FFD54F' }}>
+                      👑 +{m.sole_survivor_bonus} SOLE SURVIVOR
+                    </div>
+                  )}
                   <div className="mt-2 flex justify-center gap-1">
                     {Array.from({ length: 5 }).map((_, j) => (
                       <div key={j} className="w-2 h-2 rounded-full" style={{ background: j < m.active_players ? '#1ABC9C' : 'rgba(255,255,255,0.1)' }} />
@@ -295,7 +293,6 @@ export default function LeaderboardPage() {
             })}
           </div>
 
-          {/* Controls */}
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-white/25 font-bold tracking-wider">SORT BY:</span>
@@ -314,7 +311,6 @@ export default function LeaderboardPage() {
             </div>
           </div>
 
-          {/* Main Table */}
           <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
             <table className="w-full text-xs border-collapse">
               <thead>
@@ -324,7 +320,6 @@ export default function LeaderboardPage() {
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">PLAYERS</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">CAPTAIN</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">POOL</th>
-                  {/* Fantasy header with expand toggle */}
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">
                     <div className="flex items-center justify-center gap-1.5">
                       <span
@@ -344,7 +339,6 @@ export default function LeaderboardPage() {
                       </button>
                     </div>
                   </th>
-                  {/* Episode sub-columns, only when expanded */}
                   {showEpBreakdown && episodes.map((ep) => (
                     <th key={ep} className="text-center p-2 text-orange-400/50 font-bold text-[9px] tracking-wider min-w-[38px] border-l border-orange-500/10">
                       E{ep}
@@ -353,6 +347,7 @@ export default function LeaderboardPage() {
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider cursor-pointer hover:text-white/60" onClick={() => setSortKey('pool_score')}>POOL PTS</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider cursor-pointer hover:text-white/60" onClick={() => setSortKey('net_total')}>NET</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">QUIN</th>
+                  <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider" title="Sole Survivor +15 bonus — given to managers whose permanent team includes the season winner">SOLE</th>
                   <th className="text-center p-3 text-white/50 font-extrabold text-[10px] tracking-wider cursor-pointer hover:text-white" onClick={() => setSortKey('grand_total')}>TOTAL</th>
                 </tr>
               </thead>
@@ -361,25 +356,21 @@ export default function LeaderboardPage() {
                   const displayRank = (m as any).displayRank;
                   const ps = STATUS_COLORS[m.pool_status] || STATUS_COLORS.active;
                   const managerEpScores = epScores.filter((s) => s.manager_id === m.id);
-                  const tribeColor = TRIBE_COLORS as Record<string, string>;
 
                   return (
                     <tr key={m.id} className="border-t border-white/[0.03] hover:bg-white/[0.02]"
                       style={{ background: rankHeat(displayRank, sorted.length) }}>
 
-                      {/* # */}
                       <td className="p-3 text-center">
                         <span className={displayRank <= 3 ? 'text-base' : 'text-xs text-white/30 font-bold'}>
                           {rankBadge(displayRank)}
                         </span>
                       </td>
 
-                      {/* Manager */}
                       <td className="p-3">
                         <div className="font-bold text-white text-[13px]">{m.name}</div>
                       </td>
 
-                      {/* Players */}
                       <td className="p-3 text-center">
                         <div className="flex justify-center gap-0.5">
                           {Array.from({ length: 5 }).map((_, j) => (
@@ -390,7 +381,6 @@ export default function LeaderboardPage() {
                         <div className="text-[8px] text-white/20 mt-0.5">{m.active_players}/5</div>
                       </td>
 
-                      {/* Captain */}
                       <td className="p-3 text-center">
                         <div className="text-[11px] font-semibold" style={{ color: m.captain_active ? '#fff' : 'rgba(255,255,255,0.3)' }}>
                           {m.captain_name}
@@ -410,14 +400,12 @@ export default function LeaderboardPage() {
                         )}
                       </td>
 
-                      {/* Pool Status */}
                       <td className="p-3 text-center">
                         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: ps.bg, color: ps.color }}>
                           {ps.label}
                         </span>
                       </td>
 
-                      {/* Fantasy Total */}
                       <td className="p-3 text-center">
                         <span className="font-bold px-2 py-0.5 rounded text-[13px]"
                           style={{ background: heatColor(m.fantasy_total, stats.fantasy.min, stats.fantasy.max) }}>
@@ -425,7 +413,6 @@ export default function LeaderboardPage() {
                         </span>
                       </td>
 
-                      {/* Episode breakdown sub-columns */}
                       {showEpBreakdown && episodes.map((ep) => {
                         const epScore = managerEpScores.find((s) => s.episode === ep);
                         const pts = epScore?.fantasy_points || 0;
@@ -443,7 +430,6 @@ export default function LeaderboardPage() {
                         );
                       })}
 
-                      {/* Pool Score */}
                       <td className="p-3 text-center">
                         <span className="font-semibold px-2 py-0.5 rounded"
                           style={{ background: heatColor(m.pool_score, stats.pool.min, stats.pool.max) }}>
@@ -451,7 +437,6 @@ export default function LeaderboardPage() {
                         </span>
                       </td>
 
-                      {/* NET */}
                       <td className="p-3 text-center">
                         <span className="font-semibold px-2 py-0.5 rounded"
                           style={{ background: heatColor(m.net_total, stats.net.min, stats.net.max) }}>
@@ -459,10 +444,20 @@ export default function LeaderboardPage() {
                         </span>
                       </td>
 
-                      {/* Quinfecta */}
                       <td className="p-3 text-center text-white/25">{m.quinfecta_score || '—'}</td>
 
-                      {/* Grand Total */}
+                      <td className="p-3 text-center">
+                        {m.sole_survivor_bonus > 0 ? (
+                          <span className="text-[11px] font-extrabold px-1.5 py-0.5 rounded"
+                            style={{ background: 'rgba(255,215,0,0.15)', color: '#FFD54F' }}
+                            title="Drafted the Sole Survivor on permanent team">
+                            👑 +{m.sole_survivor_bonus}
+                          </span>
+                        ) : (
+                          <span className="text-white/15">—</span>
+                        )}
+                      </td>
+
                       <td className="p-3 text-center">
                         <span className="text-[15px] font-extrabold text-white px-2.5 py-1 rounded-md bg-white/[0.05]">
                           {Math.round(m.grand_total)}
@@ -475,16 +470,15 @@ export default function LeaderboardPage() {
             </table>
           </div>
 
-          {/* Legend */}
           <div className="mt-3 flex items-center gap-4 flex-wrap text-[10px] text-white/20">
             <span>Fantasy includes team pts, captain 2x, voted-out bonus, and chip effects.</span>
             <span>Pool = (weeks survived / total weeks) × 25% of top fantasy score.</span>
+            <span>SOLE = +15 for drafting the season winner on your permanent team.</span>
             <span>Click column headers to sort.</span>
           </div>
         </>
       )}
 
-      {/* ======== COUPLES VIEW ======== */}
       {view === 'couples' && (
         <>
           {couplesData.length > 0 && (
@@ -508,6 +502,7 @@ export default function LeaderboardPage() {
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">POOL</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">QUIN</th>
                   <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">NET</th>
+                  <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider">SOLE</th>
                   <th className="text-center p-3 text-white/50 font-extrabold text-[10px] tracking-wider">COMBINED</th>
                 </tr>
               </thead>
@@ -534,6 +529,15 @@ export default function LeaderboardPage() {
                       <td className="p-3 text-center font-semibold">{Math.round(c.pool)}</td>
                       <td className="p-3 text-center text-white/25">{c.quinfecta || '—'}</td>
                       <td className="p-3 text-center font-semibold">{c.net}</td>
+                      <td className="p-3 text-center">
+                        {c.sole > 0 ? (
+                          <span className="text-[11px] font-extrabold" style={{ color: '#FFD54F' }}>
+                            👑 +{c.sole}
+                          </span>
+                        ) : (
+                          <span className="text-white/15">—</span>
+                        )}
+                      </td>
                       <td className="p-3 text-center">
                         <span className="text-[15px] font-extrabold text-white px-2.5 py-1 rounded-md"
                           style={{ background: heatColor(c.combined, combMin, combMax) }}>

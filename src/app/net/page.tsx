@@ -9,6 +9,13 @@ interface WeeklyPickRow { manager_id: string; episode: number; net_pick_id: stri
 interface NetAnswerRow { episode: number; correct_survivor_id: string; episode_title: string | null; }
 interface SurvivorRow { id: string; name: string; }
 
+// Same lock convention as picks/pool/reveals pages — picks lock at Wed 7pm CT
+// (= Thu 00:00 UTC) and stay locked until the next Wed 00:00 UTC. "Locked" =
+// any UTC day that is NOT Wednesday.
+function isPicksLocked(): boolean {
+  return new Date().getUTCDay() !== 3;
+}
+
 export default function NetPage() {
   const [loading, setLoading] = useState(true);
   const [managers, setManagers] = useState<Manager[]>([]);
@@ -16,8 +23,14 @@ export default function NetPage() {
   const [netAnswers, setNetAnswers] = useState<NetAnswerRow[]>([]);
   const [survivors, setSurvivors] = useState<SurvivorRow[]>([]);
   const [currentEpisode, setCurrentEpisode] = useState(2);
+  const [picksLocked, setPicksLocked] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    setPicksLocked(isPicksLocked());
+    const iv = setInterval(() => setPicksLocked(isPicksLocked()), 60_000);
+    return () => clearInterval(iv);
+  }, []);
 
   async function loadData() {
     setLoading(true);
@@ -66,9 +79,12 @@ export default function NetPage() {
         epResults[ep] = { guess: guessName, correct };
       });
 
-      // Also include current episode pick (not yet answered)
+      // Current episode pick (may be visible if locked but not yet answered)
       const currentPick = weeklyPicks.find(p => p.manager_id === m.id && p.episode === currentEpisode);
       const hasCurrentPick = !!currentPick?.net_pick_id;
+      const currentGuessName = currentPick?.net_pick_id
+        ? (survivorMap.get(currentPick.net_pick_id) || '?')
+        : null;
 
       return {
         ...m,
@@ -76,7 +92,7 @@ export default function NetPage() {
         correctCount,
         totalPts: correctCount * 3,
         hasCurrentPick,
-        currentGuess: currentPick?.net_pick_id ? survivorMap.get(currentPick.net_pick_id) || null : null,
+        currentGuess: currentGuessName,
       };
     }).sort((a, b) => b.totalPts - a.totalPts);
   }, [managers, weeklyPicks, netAnswers, survivorMap, scoredEpisodes, currentEpisode]);
@@ -91,6 +107,12 @@ export default function NetPage() {
       return { ep, correctName, title: answer.episode_title, correctCount, totalPicked };
     });
   }, [scoredEpisodes, netAnswers, survivorMap, managerNetData]);
+
+  // Is the current episode already in scoredEpisodes? If so, no need for a
+  // separate "current" column.
+  const currentEpScored = scoredEpisodes.includes(currentEpisode);
+  const showCurrentEpColumn = !currentEpScored;
+  const currentSubmittedCount = managerNetData.filter(m => m.hasCurrentPick).length;
 
   if (loading) return (
     <div className="max-w-5xl mx-auto px-4 py-12 text-center">
@@ -130,21 +152,27 @@ export default function NetPage() {
           </div>
         ))}
 
-        {/* Current episode — picks hidden until scored */}
-        <div className="flex-shrink-0 rounded-xl border border-yellow-500/20 overflow-hidden"
-          style={{ minWidth: '160px', background: 'rgba(255,215,0,0.02)' }}>
-          <div className="px-3 py-2 border-b border-yellow-500/10" style={{ background: 'rgba(255,215,0,0.04)' }}>
-            <div className="text-[10px] font-extrabold text-yellow-400">E{currentEpisode}</div>
-            <div className="text-[10px] text-yellow-400/40 mt-0.5">Current</div>
-          </div>
-          <div className="p-3">
-            <div className="text-[9px] font-bold text-white/20 uppercase tracking-wider mb-1">Picks submitted</div>
-            <div className="text-[13px] font-extrabold text-white/30">
-              {managerNetData.filter(m => m.hasCurrentPick).length}/{managers.length}
+        {/* Current episode card — adapts to locked vs not locked */}
+        {showCurrentEpColumn && (
+          <div className="flex-shrink-0 rounded-xl border border-yellow-500/20 overflow-hidden"
+            style={{ minWidth: '160px', background: 'rgba(255,215,0,0.02)' }}>
+            <div className="px-3 py-2 border-b border-yellow-500/10" style={{ background: 'rgba(255,215,0,0.04)' }}>
+              <div className="text-[10px] font-extrabold text-yellow-400">E{currentEpisode}</div>
+              <div className="text-[10px] text-yellow-400/40 mt-0.5">
+                {picksLocked ? 'Locked, pending answer' : 'Current'}
+              </div>
             </div>
-            <div className="text-[9px] text-white/20 mt-1">Answer revealed after scoring</div>
+            <div className="p-3">
+              <div className="text-[9px] font-bold text-white/20 uppercase tracking-wider mb-1">Picks submitted</div>
+              <div className="text-[13px] font-extrabold text-white/30">
+                {currentSubmittedCount}/{managers.length}
+              </div>
+              <div className="text-[9px] text-white/20 mt-1">
+                {picksLocked ? 'Picks revealed below — awaiting correct answer' : 'Answer revealed after scoring'}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Main Table */}
@@ -162,11 +190,15 @@ export default function NetPage() {
                   </th>
                 );
               })}
-              {/* Current episode column */}
-              <th className="text-center p-2 text-yellow-400/40 font-bold text-[9px] tracking-wider min-w-[80px]">
-                <div>E{currentEpisode}</div>
-                <div className="text-[8px] font-normal text-yellow-400/30 mt-0.5">pending</div>
-              </th>
+              {/* Current episode column (only shown if not yet scored) */}
+              {showCurrentEpColumn && (
+                <th className="text-center p-2 text-yellow-400/40 font-bold text-[9px] tracking-wider min-w-[90px]">
+                  <div>E{currentEpisode}</div>
+                  <div className="text-[8px] font-normal text-yellow-400/30 mt-0.5">
+                    {picksLocked ? 'pending answer' : 'pending'}
+                  </div>
+                </th>
+              )}
               <th className="text-center p-3 text-white/35 font-bold text-[10px] tracking-wider w-16">CORRECT</th>
               <th className="text-center p-3 text-white/50 font-extrabold text-[10px] tracking-wider w-16">NET PTS</th>
             </tr>
@@ -207,12 +239,23 @@ export default function NetPage() {
                   );
                 })}
 
-                {/* Current episode — show pick if submitted, else dash */}
-                <td className="p-2 text-center">
-                  {m.hasCurrentPick
-                    ? <span className="text-[10px] font-semibold text-yellow-300/60">✓ picked</span>
-                    : <span className="text-white/[0.08]">—</span>}
-                </td>
+                {/* Current episode — show pick name when locked, otherwise generic confirmation */}
+                {showCurrentEpColumn && (
+                  <td className="p-2 text-center">
+                    {m.hasCurrentPick ? (
+                      picksLocked ? (
+                        <div className="inline-flex flex-col items-center gap-0.5">
+                          <span className="text-[11px] font-semibold text-yellow-300/85">{m.currentGuess}</span>
+                          <span className="text-[9px] text-yellow-400/40">pending</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-yellow-300/60">✓ picked</span>
+                      )
+                    ) : (
+                      <span className="text-white/[0.08]">—</span>
+                    )}
+                  </td>
+                )}
 
                 {/* Correct count */}
                 <td className="p-3 text-center">
@@ -248,7 +291,7 @@ export default function NetPage() {
                   </td>
                 );
               })}
-              <td />
+              {showCurrentEpColumn && <td />}
               <td />
               <td className="p-3 text-center">
                 <span className="text-[11px] font-bold text-teal-400">

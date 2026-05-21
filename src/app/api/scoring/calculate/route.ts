@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
 
     const totalEpisodes = seasonData?.total_episodes || 13;
     const totalWeeks = totalEpisodes - 1;
+    const isFinaleRun = episode === totalEpisodes;
 
     // 1. Survivor scores for this episode
     const { data: episodeScores } = await supabase
@@ -44,13 +45,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Survivor metadata (used for voted-out bonus + quinfecta actuals)
+    // 2. Survivor metadata (voted-out bonus + quinfecta actuals + sole survivor)
     const { data: survivors } = await supabase
       .from('survivors')
       .select('id, name, is_active, eliminated_episode, elimination_order')
       .eq('season_id', seasonId);
 
-    // Build score lookup — fsgPoints, manualAdjustment, votedOutBonus kept separate
     const survivorEpScores: Record<
       string,
       { fsgPoints: number; manualAdjustment: number; votedOutBonus: number; isNewlyEliminated: boolean }
@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No managers found' }, { status: 500 });
     }
 
-    // 4. Active team members
+    // 4. Permanent (drafted) team rosters — used for sole-survivor bonus too
     const { data: teams } = await supabase
       .from('teams')
       .select('manager_id, survivor_id')
@@ -147,7 +147,7 @@ export async function POST(request: NextRequest) {
       .eq('episode', episode)
       .maybeSingle();
 
-    // 8. FIRST PASS — base fantasy (no chips), used as Chip 1 target score
+    // 8. FIRST PASS — base fantasy (no chips), for Chip 1 targeting
     const managerBaseFantasy: Record<string, number> = {};
     for (const mgr of managers) {
       const team = effectiveTeams[mgr.id] || [];
@@ -248,7 +248,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 10c. POOL STATUS — canonical recomputation from picks history
+    // 10c. POOL STATUS — canonical recomputation from picks history.
+    // Adds an "active → finished" transition at season's end.
     // ----------------------------------------------------------------
     const { data: allMgrPicksHistory } = await supabase
       .from('weekly_picks')
@@ -278,7 +279,10 @@ export async function POST(request: NextRequest) {
 
     for (const mgr of managers) {
       const existing = existingStatusByMgr[mgr.id];
-      if (existing === 'burnt' || existing === 'finished') continue;
+      if (existing === 'burnt') continue;
+      // Note: 'finished' is NOT preserved on its own; we recompute it from
+      // scratch every run. If a manager was marked finished but data changes
+      // mean they shouldn't be, the recomputation corrects it.
 
       const mgrPicks = picksByMgrEp[mgr.id] || {};
       let status: 'active' | 'drowned' = 'active';
@@ -320,11 +324,18 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // At season's end, any pool-active manager has "finished" the pool —
+      // they survived every round and earned the max pool score.
+      let finalStatus: 'active' | 'drowned' | 'finished' = status;
+      if (isFinaleRun && status === 'active') {
+        finalStatus = 'finished';
+      }
+
       await supabase.from('pool_status').upsert(
         {
           season_id: seasonId,
           manager_id: mgr.id,
-          status,
+          status: finalStatus,
           weeks_survived: weeksSurvived,
           drowned_episode: drownedEpisode,
         },
@@ -333,12 +344,10 @@ export async function POST(request: NextRequest) {
     }
 
     // ----------------------------------------------------------------
-    // 10d. QUINFECTA ACTUALS — build once for use in section 11.
-    //
+    // 10d. QUINFECTA ACTUALS + SOLE SURVIVOR identification.
     //   place 20–23 → survivor with that elimination_order
-    //   place 24    → Sole Survivor (is_active=true). Falls back to
-    //                 elimination_order=24 for backward compatibility
-    //                 if a season uses the alternate convention.
+    //   place 24    → is_active=true winner (falls back to elim_order=24
+    //                 for backward compat with alternate conventions)
     // ----------------------------------------------------------------
     const quinfectaActuals: { place: number; survivorId: string }[] = [];
     for (const place of [20, 21, 22, 23]) {
@@ -349,8 +358,20 @@ export async function POST(request: NextRequest) {
                 ?? survivors?.find(sv => sv.elimination_order === 24);
     if (winner) quinfectaActuals.push({ place: 24, survivorId: winner.id });
 
+    // Build set of managers eligible for +15 Sole Survivor bonus —
+    // PERMANENT team membership only (chip 5 player-add does NOT qualify).
+    const soleSurvivorManagers = new Set<string>();
+    if (winner) {
+      for (const t of teams || []) {
+        if (t.survivor_id === winner.id) {
+          soleSurvivorManagers.add(t.manager_id);
+        }
+      }
+    }
+    const SOLE_SURVIVOR_BONUS = 15;
+
     // ----------------------------------------------------------------
-    // 11. Recalculate manager_totals (fantasy + pool + quinfecta + NET)
+    // 11. Recalculate manager_totals
     // ----------------------------------------------------------------
     for (const mgr of managers) {
       const { data: allEpScores } = await supabase
@@ -390,9 +411,6 @@ export async function POST(request: NextRequest) {
       );
 
       // ── Quinfecta score ──
-      // Always computed (idempotent). If predictions or actuals are missing
-      // the score is simply 0. Once finale data is set + predictions are
-      // submitted, it becomes meaningful.
       let quinfectaScore = 0;
       const { data: qPred } = await supabase
         .from('quinfecta_predictions')
@@ -413,7 +431,19 @@ export async function POST(request: NextRequest) {
         quinfectaScore = calculateQuinfectaScore(predictions, quinfectaActuals);
       }
 
-      const grandTotal = calculateGrandTotal(fantasyTotal, poolScore, quinfectaScore, netTotal);
+      // ── Sole Survivor bonus ──
+      // +15 to managers with the winner on their PERMANENT (drafted) team.
+      // Doesn't count chip 5 "Player Add" adds.
+      const soleSurvivorBonus = soleSurvivorManagers.has(mgr.id)
+        ? SOLE_SURVIVOR_BONUS
+        : 0;
+
+      // Sole survivor adds onto whatever calculateGrandTotal returns. Keeping
+      // it outside the function avoids touching the scoring.ts signature; this
+      // stays a simple additive bonus.
+      const grandTotal =
+        calculateGrandTotal(fantasyTotal, poolScore, quinfectaScore, netTotal)
+        + soleSurvivorBonus;
 
       await supabase.from('manager_totals').upsert(
         {
@@ -423,6 +453,7 @@ export async function POST(request: NextRequest) {
           pool_score: poolScore,
           quinfecta_score: quinfectaScore,
           net_total: netTotal,
+          sole_survivor_bonus: soleSurvivorBonus,
           grand_total: grandTotal,
           updated_at: new Date().toISOString(),
         },

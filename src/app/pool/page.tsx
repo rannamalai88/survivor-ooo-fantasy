@@ -10,13 +10,15 @@ interface WeeklyPickRow { manager_id: string; episode: number; pool_pick_id: str
 interface ManagerTotalRow { manager_id: string; pool_score: number; }
 interface SurvivorInfo { id: string; name: string; tribe: string; is_active: boolean; eliminated_episode: number | null; }
 
+// Picks lock at Wed 7pm CT (= Thu 00:00 UTC) and stay locked until the
+// following Tue 7pm CT (= Wed 00:00 UTC during CDT). "Locked" = any UTC
+// day that is NOT Wednesday; Wednesday UTC is the picks-open window.
+//
+// Previously the function only returned true when ctNow itself was Wed
+// after 7pm, which incorrectly flipped back to "not locked" on Thursday,
+// hiding the just-locked episode all week.
 function isPicksLocked(): boolean {
-  // Picks lock on Wednesday at 7pm CT only.
-  // Thursday–Tuesday = new episode's pick window is open → not locked.
-  const now = new Date();
-  const ctNow = new Date(now.getTime() - 5 * 60 * 60 * 1000);
-  const day = ctNow.getUTCDay(), hour = ctNow.getUTCHours(), min = ctNow.getUTCMinutes();
-  return day === 3 && (hour > 19 || (hour === 19 && min >= 0));
+  return new Date().getUTCDay() !== 3;
 }
 
 export default function PoolBoardPage() {
@@ -68,9 +70,6 @@ export default function PoolBoardPage() {
     return map;
   }, [survivors]);
 
-  // FIX: Map episode → ALL eliminated survivor IDs (array, not single value).
-  // Previously Map<number, string> with .set() overwrote the first elimination
-  // in double-elimination episodes, making correct backdoor picks appear wrong.
   const eliminatedByEp = useMemo(() => {
     const map = new Map<number, string[]>();
     survivors.filter(s => s.eliminated_episode !== null).forEach(s => {
@@ -104,7 +103,6 @@ export default function PoolBoardPage() {
 
         if (pick.pool_backdoor_id) {
           const survivor = survivorMap.get(pick.pool_backdoor_id);
-          // FIX: check against ALL eliminations for this episode (handles double eliminations)
           const eliminatedIds = eliminatedByEp.get(ep) || [];
           const correct = eliminatedIds.includes(pick.pool_backdoor_id);
           return { episode: ep, type: 'backdoor' as const, survivor, backdoorCorrect: correct };
@@ -191,7 +189,6 @@ export default function PoolBoardPage() {
               <th className="text-left p-2.5 text-white/35 font-bold text-[10px] tracking-wider sticky left-0 bg-[#0d0d15] z-10 min-w-[120px]">MANAGER</th>
               <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">STATUS</th>
               {episodes.map(ep => {
-                // Show ALL eliminated survivors for this episode
                 const eliminatedNames = (eliminatedByEp.get(ep) || [])
                   .map(id => survivorMap.get(id)?.name)
                   .filter(Boolean) as string[];
