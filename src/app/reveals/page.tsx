@@ -440,20 +440,18 @@ function RevealsContent() {
     }
   }
 
-  // Deadline check — Wed 7pm CT (mirrors picks page logic)
+// Lock check — picks for current_episode lock at Wed 7pm CT (= Thu 00:00 UTC)
+  // and stay locked until current_episode advances (Calculate runs after the
+  // episode airs and scores). The original deadline check was scoped to the
+  // upcoming Wed and incorrectly flipped back to "not locked" once Thursday
+  // started, hiding the just-locked episode from reveals all week.
+  //
+  // Simpler rule: it's "locked" any UTC day except Wednesday itself
+  // (Wed UTC = Tue 7pm CT through Wed 6:59pm CT — the picks-open window).
   useEffect(() => {
     if (!season) return;
-    function getDeadline() {
-      const now = new Date();
-      const day = now.getDay();
-      const daysUntil = (3 - day + 7) % 7 || (now.getUTCHours() >= 24 ? 7 : 0);
-      const wed = new Date(now); wed.setDate(now.getDate() + daysUntil);
-      wed.setUTCHours(24, 0, 0, 0);
-      return wed;
-    }
     const check = () => {
-      const dl = getDeadline();
-      setIsPastDeadline(dl.getTime() - Date.now() <= 0);
+      setIsPastDeadline(new Date().getUTCDay() !== 3);
     };
     check();
     const iv = setInterval(check, 60000);
