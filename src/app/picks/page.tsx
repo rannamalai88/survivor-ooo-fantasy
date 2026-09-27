@@ -4,8 +4,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import AuthGuard from '@/components/auth/AuthGuard';
 import { supabase } from '@/lib/supabase/client';
+import { Page, PageSkeleton, Card, Badge, Button, Callout, EmptyState, Segmented, SurvivorAvatar, ManagerAvatar, TribeTag, cn } from '@/components/ui';
+import { IconCheck, IconClock, IconLock } from '@/components/ui/icons';
 import {
-  SEASON_ID, TRIBE_COLORS, ROSTER_SLOTS, PICK_CHIPS, CHIP_FIRST_EP, CHIP_LAST_EP,
+  SEASON_ID, ROSTER_SLOTS, PICK_CHIPS, CHIP_FIRST_EP, CHIP_LAST_EP,
   SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, PENALTY,
   type RosterSlot, type PickChip,
 } from '@/lib/constants';
@@ -47,10 +49,6 @@ const SLOT_SCORING: Record<RosterSlot, string> = {
   mop:        `Hit: their points ×2 · If they go home: ${PENALTY.mop}`,
 };
 
-const tc = (tribe: string) => TRIBE_COLORS[tribe] || '#9aa0a8';
-// Text colour on a solid tribe fill — Toka yellow needs dark text.
-const tcOn = (tribe: string) => (tribe === 'Toka' ? '#16161a' : '#fff');
-
 function formatLock(iso: string) {
   return new Date(iso).toLocaleString('en-US', {
     timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -66,69 +64,45 @@ function formatCountdown(ms: number) {
 }
 
 // ============================================================
-// Presentational pieces
+// Presentational pieces (theme tokens; logic lives in PicksContent)
 // ============================================================
-const Av = ({ s, sz = 28 }: { s: Pick<Survivor, 'name' | 'tribe' | 'photo_url'>; sz?: number }) => {
-  const color = tc(s.tribe);
-  return (
-    <div style={{ width: sz, height: sz, borderRadius: '50%', background: `linear-gradient(135deg,${color}44,${color}77)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: `1.5px solid ${color}`, overflow: 'hidden' }}>
-      {s.photo_url ? (
-        <img src={s.photo_url} alt={s.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-      ) : (
-        <span style={{ fontSize: sz * 0.42, fontWeight: 800, color: '#fff' }}>{s.name[0]}</span>
-      )}
-    </div>
-  );
-};
+type Tone = 'positive' | 'accent' | 'neutral' | 'warn' | 'negative';
+const toneOf = (hex?: string): Tone => hex === '#4ade80' ? 'positive' : hex === '#3fc0f0' ? 'accent' : hex === '#9aa0a8' ? 'neutral' : hex === '#f87171' ? 'negative' : 'warn';
 
 const Section = ({ title, icon, children, badge, badgeColor, error }: { title: string; icon: string; children: React.ReactNode; badge?: string; badgeColor?: string; error?: boolean; }) => (
-  <div style={{ background: 'rgba(255,255,255,0.02)', border: error ? '1px solid rgba(248,113,113,0.45)' : '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '18px', marginBottom: '12px' }}>
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', gap: '8px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ fontSize: '18px' }}>{icon}</span>
-        <h3 style={{ margin: 0, fontSize: '13px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' as const }}>{title}</h3>
+  <section className={cn('rounded-2xl bg-surface border shadow-card p-4 mb-3', error ? 'border-negative/50' : 'border-line')}>
+    <div className="flex items-center justify-between gap-2 mb-2">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">{icon}</span>
+        <h3 className="text-[15px] font-semibold text-ink">{title}</h3>
       </div>
-      {badge && <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 10px', borderRadius: '20px', background: `${badgeColor || '#FF6B35'}15`, color: badgeColor || '#FF6B35', border: `1px solid ${badgeColor || '#FF6B35'}30`, letterSpacing: '1px', whiteSpace: 'nowrap' }}>{badge}</span>}
+      {badge && <Badge tone={toneOf(badgeColor)}>{badge.charAt(0) + badge.slice(1).toLowerCase()}</Badge>}
     </div>
     {children}
-  </div>
+  </section>
 );
 
 const Hint = ({ children }: { children: React.ReactNode }) => (
-  <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', margin: '0 0 10px', lineHeight: 1.5 }}>{children}</p>
+  <p className="text-[13px] text-muted leading-relaxed mb-3">{children}</p>
 );
 
 const ErrorLine = ({ children }: { children: React.ReactNode }) => (
-  <div style={{ marginTop: '10px', padding: '9px 12px', borderRadius: '8px', fontSize: '12px', lineHeight: 1.45, background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)', color: '#f87171' }}>⚠ {children}</div>
-);
-
-const TribeFilter = ({ value, onChange, tribes }: { value: string; onChange: (v: string) => void; tribes: string[] }) => (
-  <div style={{ display: 'flex', gap: '4px', marginBottom: '10px' }}>
-    {['All', ...tribes].map(t => {
-      const on = value === t;
-      const c = t === 'All' ? '#FF6B35' : tc(t);
-      return (
-        <button key={t} onClick={() => onChange(t)} style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '10px', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase' as const, border: 'none', cursor: 'pointer', background: on ? `${c}22` : 'rgba(255,255,255,0.03)', color: on ? c : 'rgba(255,255,255,0.3)' }}>{t}</button>
-      );
-    })}
-  </div>
+  <div className="mt-2.5 rounded-xl border border-negative/30 bg-negative/10 px-3 py-2 text-[13px] text-negative">⚠ {children}</div>
 );
 
 // The currently chosen survivor for a slot, with a Change / Choose button.
 function Chosen({ s, placeholder, onOpen, open, locked }: { s: Survivor | null; placeholder: string; onOpen: () => void; open: boolean; locked: boolean }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '10px', background: s ? `${tc(s.tribe)}14` : 'rgba(255,255,255,0.02)', border: s ? `1px solid ${tc(s.tribe)}55` : '1px dashed rgba(255,255,255,0.12)' }}>
+    <div className={cn('flex items-center gap-3 rounded-xl px-3 py-2.5', s ? 'bg-raised/60 border border-line' : 'border border-dashed border-line')}>
       {s ? <>
-        <Av s={s} sz={32} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff' }}>{s.name}</div>
-          <div style={{ fontSize: '10px', fontWeight: 700, color: tc(s.tribe), letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>
+        <SurvivorAvatar name={s.name} tribe={s.tribe} photoUrl={s.photo_url} size={36} />
+        <div className="flex-1 min-w-0">
+          <div className="font-semibold text-ink truncate">{s.name}</div>
+          <TribeTag tribe={s.tribe} />
         </div>
-      </> : <div style={{ flex: 1, fontSize: '13px', color: 'rgba(255,255,255,0.35)' }}>{locked ? 'No pick' : placeholder}</div>}
+      </> : <div className="flex-1 text-sm text-muted">{locked ? 'No pick' : placeholder}</div>}
       {!locked && (
-        <button onClick={onOpen} style={{ padding: '6px 12px', borderRadius: '8px', fontSize: '11px', fontWeight: 700, letterSpacing: '0.5px', cursor: 'pointer', border: '1px solid rgba(255,107,53,0.3)', background: open ? 'rgba(255,107,53,0.15)' : 'rgba(255,107,53,0.06)', color: '#FF6B35', whiteSpace: 'nowrap' }}>
-          {open ? 'Close' : s ? 'Change' : 'Choose'}
-        </button>
+        <Button size="sm" variant={s ? 'secondary' : 'primary'} onClick={onOpen}>{open ? 'Close' : s ? 'Change' : 'Choose'}</Button>
       )}
     </div>
   );
@@ -144,24 +118,26 @@ function PickerGrid({ options, selectedId, onSelect, tribes, tags, pinned }: {
   const filtered = filter === 'All' ? options : options.filter(s => s.tribe === filter);
   const list = [...(pinned || []), ...filtered];
   return (
-    <div style={{ marginTop: '10px' }}>
-      <TribeFilter value={filter} onChange={setFilter} tribes={tribes} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(125px,1fr))', gap: '6px', maxHeight: '300px', overflowY: 'auto', padding: '2px' }}>
-        {list.length === 0 && <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.3)', padding: '16px', textAlign: 'center', gridColumn: '1/-1' }}>No survivors available</div>}
+    <div className="mt-3">
+      <Segmented value={filter} onChange={setFilter} className="mb-2.5" options={['All', ...tribes].map(t => ({ value: t, label: t }))} />
+      <div className="grid gap-1.5 max-h-[320px] overflow-y-auto p-0.5" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(128px,1fr))' }}>
+        {list.length === 0 && <div className="col-span-full py-4 text-center text-sm text-muted">No survivors available</div>}
         {list.map(s => {
           const sel = selectedId === s.id;
           const tag = tags?.[s.id];
           return (
-            <div key={s.id} onClick={() => onSelect(s.id)} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 10px', borderRadius: '10px', cursor: 'pointer', background: sel ? `${tc(s.tribe)}18` : 'rgba(255,255,255,0.02)', border: sel ? `1px solid ${tc(s.tribe)}66` : '1px solid rgba(255,255,255,0.05)' }}>
-              <Av s={s} sz={26} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: sel ? '#fff' : 'rgba(255,255,255,0.75)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</div>
+            <button key={s.id} type="button" onClick={() => onSelect(s.id)}
+              className={cn('flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors',
+                sel ? 'border-accent bg-accent/10' : 'border-line bg-raised/40 hover:bg-raised')}>
+              <SurvivorAvatar name={s.name} tribe={s.tribe} photoUrl={s.photo_url} size={28} />
+              <div className="flex-1 min-w-0">
+                <div className={cn('text-[13px] truncate', sel ? 'font-semibold text-ink' : 'font-medium text-ink')}>{s.name}</div>
                 {tag
-                  ? <div style={{ fontSize: '9px', fontWeight: 700, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>{tag}</div>
-                  : <div style={{ fontSize: '9px', fontWeight: 700, color: tc(s.tribe), letterSpacing: '1px' }}>{s.tribe.toUpperCase()}</div>}
+                  ? <div className="text-[10px] font-semibold text-warn truncate">{tag}</div>
+                  : <div className="text-[10px] text-muted">{s.tribe}</div>}
               </div>
-              {sel && <div style={{ width: '18px', height: '18px', borderRadius: '50%', background: tc(s.tribe), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><span style={{ color: tcOn(s.tribe), fontSize: '11px', fontWeight: 800 }}>✓</span></div>}
-            </div>
+              {sel && <span className="h-5 w-5 rounded-full bg-accent text-on-accent inline-flex items-center justify-center shrink-0"><IconCheck size={12} /></span>}
+            </button>
           );
         })}
       </div>
@@ -448,245 +424,237 @@ function PicksContent() {
   }
 
   // ── Render ─────────────────────────────────────────────────
-  const pageStyle = { minHeight: '100vh', background: '#0a0a0f', color: '#e8e8e8', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" } as const;
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-white/30 text-sm tracking-wider uppercase">Loading picks...</div></div>;
-  if (loadError) return <div className="min-h-screen flex items-center justify-center px-4" style={{ background: '#0a0a0f' }}><div className="text-center"><div className="text-3xl mb-3">⚠️</div><div className="text-sm" style={{ color: '#f87171' }}>{loadError}</div><button onClick={loadData} className="mt-4 text-xs text-white/50 underline">Try again</button></div></div>;
-  if (!season) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-center"><div className="text-3xl mb-3">🏝</div><div className="text-white/40 text-sm">No active season found</div></div></div>;
+  if (loading) return <PageSkeleton />;
+  if (loadError) return <Page><EmptyState icon="⚠️" title="Couldn't load your pick card" action={<Button onClick={loadData}>Try again</Button>}>{loadError}</EmptyState></Page>;
+  if (!season) return <Page><EmptyState icon="🏝" title="No active season found" /></Page>;
 
   const titleSurvivor = titlePick ? byId.get(titlePick) || null : null;
+  const requiredDone = [
+    ...ROSTER_SLOTS.map(s => !!slots[s.key]), !!titlePick,
+    ...(poolStatus === 'active' ? [!!poolPick] : []),
+    ...(episode?.is_finale ? [quinfecta.every(Boolean)] : []),
+  ];
+  const doneCount = requiredDone.filter(Boolean).length;
 
   return (
-    <div style={pageStyle}>
-      <div style={{ maxWidth: '560px', margin: '0 auto', padding: '20px 16px 120px' }}>
-
-        {/* ── HEADER ── */}
-        <div style={{ marginBottom: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <h1 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: '#fff' }}>🔥 Pick Card</h1>
-            <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: 'rgba(255,107,53,0.1)', color: '#FF6B35', border: '1px solid rgba(255,107,53,0.2)' }}>EP. {currentEp}</span>
-            {episode?.is_finale && <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: 'rgba(155,89,182,0.15)', color: '#c084fc', border: '1px solid rgba(155,89,182,0.3)', letterSpacing: '1px' }}>🏆 FINALE</span>}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)' }}>{season.name} · Locks {episode ? formatLock(episode.lock_at) : '—'}</span>
-            <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: isLocked ? 'rgba(248,113,113,0.1)' : 'rgba(5,169,230,0.1)', color: isLocked ? '#f87171' : '#3fc0f0' }}>
-              {isLocked ? '🔒 LOCKED' : `⏱ ${formatCountdown(lockAtMs! - now)}`}
-            </span>
-          </div>
+    <Page className="pb-4">
+      {/* ── HEADER ── */}
+      <div className="flex items-end justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <div className="text-xs font-semibold text-muted mb-1">{season.name} · Episode {currentEp}{episode?.is_finale ? ' · Finale' : ''}</div>
+          <h1 className="text-2xl font-bold tracking-tight text-ink">Pick card</h1>
+          <div className="text-sm text-muted mt-1">Locks {episode ? formatLock(episode.lock_at) : '—'}</div>
         </div>
+        <div className="flex items-center gap-2">
+          {!isLocked && <Badge tone={doneCount === requiredDone.length ? 'positive' : 'neutral'}>{doneCount} of {requiredDone.length} done</Badge>}
+          <Badge tone={isLocked ? 'negative' : 'accent'}>{isLocked ? <><IconLock size={12} />Locked</> : <><IconClock size={12} />{formatCountdown(lockAtMs! - now)}</>}</Badge>
+        </div>
+      </div>
 
-        {!episode && <ErrorLine>No schedule found for episode {currentEp}. The card is locked until the commissioner fixes the episodes table.</ErrorLine>}
+      {!episode && <ErrorLine>No schedule found for episode {currentEp}. The card is locked until the commissioner fixes the episodes table.</ErrorLine>}
 
-        {/* ── H2H FIXTURE ── */}
-        <div style={{ margin: '12px 0 14px', padding: '18px', borderRadius: '16px', background: 'linear-gradient(135deg, rgba(255,107,53,0.14), rgba(5,169,230,0.08))', border: '1px solid rgba(255,107,53,0.25)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '10px' }}>
-            <span style={{ fontSize: '10px', fontWeight: 800, letterSpacing: '2px', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase' }}>
-              {episode?.h2h_round ? `Head to Head · Round ${episode.h2h_round}` : 'Head to Head'}
-            </span>
-            {episode?.is_couples_week && <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: 'rgba(244,114,182,0.15)', color: '#f472b6', letterSpacing: '1px' }}>💞 COUPLES WEEK</span>}
-            {episode?.is_rivalry_week && <span style={{ fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: 'rgba(248,113,113,0.15)', color: '#f87171', letterSpacing: '1px' }}>⚔️ RIVALRY WEEK</span>}
+      {/* ── H2H FIXTURE ── */}
+      <Card className="mb-3 bg-gradient-to-br from-accent/10 via-surface to-surface">
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <span className="text-xs font-semibold text-muted">{episode?.h2h_round ? `Head to head · Round ${episode.h2h_round}` : 'Head to head'}</span>
+          {episode?.is_couples_week && <Badge tone="accent">💞 Couples Week</Badge>}
+          {episode?.is_rivalry_week && <Badge tone="negative">⚔️ Rivalry Week</Badge>}
+        </div>
+        {fixture && opponentName ? (
+          <>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 flex items-center gap-2 min-w-0"><ManagerAvatar name={manager?.name || '?'} size={36} me /><span className="text-lg font-bold text-ink truncate">You</span></div>
+              <span className="text-xs font-bold tracking-widest text-faint">VS</span>
+              <div className="flex-1 flex items-center gap-2 justify-end min-w-0"><span className="text-lg font-bold text-ink truncate">{opponentName}</span><ManagerAvatar name={opponentName} size={36} /></div>
+            </div>
+            <div className="text-xs text-muted mt-3">Higher card total wins · Win 3 · Draw 1 · Loss 0</div>
+          </>
+        ) : episode?.h2h_round ? (
+          <div className="text-sm text-negative">No fixture found for you in round {episode.h2h_round}. Tell the commissioner.</div>
+        ) : (
+          <div className="text-[15px] font-semibold text-ink">No fixture this week{episode?.is_finale ? ' — it’s the finale.' : '.'}</div>
+        )}
+      </Card>
+
+      {saveMessage && <Callout tone={saveMessage.ok ? 'positive' : 'negative'} className="mb-3">{saveMessage.text}</Callout>}
+      {existingPick && !saveMessage && (
+        <Callout tone="positive" className="mb-3">{isLocked ? '✅ Your card is in. It’s locked for this episode.' : '✅ Card submitted — you can change it until the deadline.'}</Callout>
+      )}
+      {!existingPick && isLocked && episode && <Callout tone="negative" className="mb-3">You didn’t submit a card for episode {currentEp}.</Callout>}
+
+      {/* ── ROSTER SLOTS ── */}
+      {ROSTER_SLOTS.map(({ key, label, icon, desc }) => {
+        const id = slots[key];
+        const s = id ? byId.get(id) || null : null;
+        const err = slotErrors[key];
+        const chipHere = chip && chipSlot === key ? chipDef : null;
+        return (
+          <Section key={key} title={label} icon={icon} error={!!err || (submitAttempted && !id)}
+            badge={chipHere ? `${chipHere.icon} ${chipHere.name.toUpperCase()}` : id ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'}
+            badgeColor={chipHere ? '#3fc0f0' : id ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
+            <Hint>{desc} <span className="text-faint">{SLOT_SCORING[key]}</span></Hint>
+            <Chosen s={s} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
+            {openPicker === key && !isLocked && (
+              <PickerGrid options={rosterEligible} selectedId={id} onSelect={(sid) => pickSlot(key, sid)} tribes={tribes}
+                tags={Object.fromEntries(Object.entries(rosterTags).filter(([sid]) => !(slotsBySurvivor[sid]?.length === 1 && slotsBySurvivor[sid][0] === key)))} />
+            )}
+            {err && <ErrorLine>{err}</ErrorLine>}
+          </Section>
+        );
+      })}
+
+      {/* ── TITLE ── */}
+      <Section title="Title" icon="💬" error={submitAttempted && !titlePick}
+        badge={titlePick ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={titlePick ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
+        {season.next_episode_title && (
+          <div className="mb-3 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2.5">
+            <div className="text-[11px] font-semibold text-accent mb-0.5">This week’s episode title</div>
+            <div className="text-[15px] font-semibold text-ink">&ldquo;{season.next_episode_title}&rdquo;</div>
           </div>
-          {fixture && opponentName ? (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '14px' }}>
-                <span style={{ flex: 1, textAlign: 'right', fontSize: '22px', fontWeight: 900, color: '#fff' }}>{manager?.name}</span>
-                <span style={{ fontSize: '12px', fontWeight: 800, color: '#FF6B35', letterSpacing: '1px' }}>VS</span>
-                <span style={{ flex: 1, textAlign: 'left', fontSize: '22px', fontWeight: 900, color: '#fff' }}>{opponentName}</span>
-              </div>
-              <div style={{ textAlign: 'center', fontSize: '11px', color: 'rgba(255,255,255,0.4)', marginTop: '8px' }}>Higher card total wins · Win 3 · Draw 1 · Loss 0</div>
-            </>
-          ) : episode?.h2h_round ? (
-            <div style={{ fontSize: '13px', color: '#f87171' }}>No fixture found for you in round {episode.h2h_round}. Tell the commissioner.</div>
-          ) : (
-            <div style={{ fontSize: '14px', fontWeight: 700, color: 'rgba(255,255,255,0.6)' }}>No fixture this week{episode?.is_finale ? ' — it’s the finale.' : '.'}</div>
+        )}
+        <Hint>Who says the episode title? Anyone still in the game, or Jeff. This pick can repeat one of your roster picks. <span className="text-faint">Correct: +{SLOT_BONUS_TITLE}</span></Hint>
+        <Chosen s={titleSurvivor} placeholder="Choose who says it" open={openPicker === 'title'} onOpen={() => togglePicker('title')} locked={isLocked} />
+        {openPicker === 'title' && !isLocked && (
+          <PickerGrid options={rosterEligible} pinned={titleOnly} selectedId={titlePick} tribes={tribes}
+            onSelect={(sid) => { setTitlePick(sid); setOpenPicker(null); setSaveMessage(null); }} />
+        )}
+      </Section>
+
+      {/* ── POOL ── */}
+      <Section title="Survivor Pool" icon="🌊" error={submitAttempted && poolStatus === 'active' && !poolPick}
+        badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : poolStatus === 'burnt' ? 'BURNT' : poolStatus.toUpperCase()}
+        badgeColor={poolStatus === 'active' ? '#4ade80' : poolStatus === 'drowned' ? '#FF6B35' : '#f87171'}>
+        {poolStatus === 'active' ? (<>
+          <Hint>Pick one survivor you think <b className="text-ink">will NOT be eliminated</b>. You can’t reuse a previous pool pick.</Hint>
+          <Chosen s={poolPick ? byId.get(poolPick) || null : null} placeholder="Choose a survivor" open={openPicker === 'pool'} onOpen={() => togglePicker('pool')} locked={isLocked} />
+          {openPicker === 'pool' && !isLocked && (
+            <PickerGrid options={poolOptions} selectedId={poolPick} tribes={tribes}
+              onSelect={(sid) => { setPoolPick(sid); setOpenPicker(null); setSaveMessage(null); }} />
           )}
-        </div>
-
-        {saveMessage && (
-          <div style={{ padding: '12px 16px', borderRadius: '10px', marginBottom: '12px', fontSize: '13px', background: saveMessage.ok ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)', border: saveMessage.ok ? '1px solid rgba(74,222,128,0.25)' : '1px solid rgba(248,113,113,0.3)', color: saveMessage.ok ? '#4ade80' : '#f87171' }}>{saveMessage.text}</div>
+        </>) : poolStatus === 'drowned' ? (<>
+          <Hint>You’ve been <b className="text-negative">Drowned</b>. Pick who <b className="text-ink">WILL be eliminated</b> for a Backdoor attempt (optional).</Hint>
+          <Chosen s={backdoorPick ? byId.get(backdoorPick) || null : null} placeholder="Choose a Backdoor pick" open={openPicker === 'backdoor'} onOpen={() => togglePicker('backdoor')} locked={isLocked} />
+          {openPicker === 'backdoor' && !isLocked && (
+            <PickerGrid options={rosterEligible} selectedId={backdoorPick} tribes={tribes}
+              onSelect={(sid) => { setBackdoorPick(sid); setOpenPicker(null); setSaveMessage(null); }} />
+          )}
+        </>) : (
+          <p className="text-sm text-negative">You’ve been <b>Burnt</b> — no more pool picks this season.</p>
         )}
-        {existingPick && !saveMessage && (
-          <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '12px', fontSize: '12px', background: 'rgba(74,222,128,0.06)', border: '1px solid rgba(74,222,128,0.18)', color: 'rgba(74,222,128,0.85)' }}>
-            {isLocked ? '✅ Your card is in. It’s locked for this episode.' : '✅ Card submitted — you can change it until the deadline.'}
-          </div>
-        )}
-        {!existingPick && isLocked && episode && (
-          <div style={{ padding: '10px 14px', borderRadius: '10px', marginBottom: '12px', fontSize: '12px', background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.2)', color: '#f87171' }}>You didn’t submit a card for episode {currentEp}.</div>
-        )}
+      </Section>
 
-        {/* ── ROSTER SLOTS ── */}
-        {ROSTER_SLOTS.map(({ key, label, icon, desc }) => {
-          const id = slots[key];
-          const s = id ? byId.get(id) || null : null;
-          const err = slotErrors[key];
-          const chipHere = chip && chipSlot === key ? chipDef : null;
-          return (
-            <Section key={key} title={label} icon={icon} error={!!err || (submitAttempted && !id)}
-              badge={chipHere ? `${chipHere.icon} ${chipHere.name.toUpperCase()}` : id ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'}
-              badgeColor={chipHere ? '#3fc0f0' : id ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
-              <Hint>{desc} <span style={{ color: 'rgba(255,255,255,0.3)' }}>{SLOT_SCORING[key]}</span></Hint>
-              <Chosen s={s} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
-              {openPicker === key && !isLocked && (
-                <PickerGrid options={rosterEligible} selectedId={id} onSelect={(sid) => pickSlot(key, sid)} tribes={tribes}
-                  tags={Object.fromEntries(Object.entries(rosterTags).filter(([sid]) => !(slotsBySurvivor[sid]?.length === 1 && slotsBySurvivor[sid][0] === key)))} />
-              )}
-              {err && <ErrorLine>{err}</ErrorLine>}
-            </Section>
-          );
-        })}
+      {/* ── QUINFECTA (finale only) ── */}
+      {episode?.is_finale && (
+        <Section title="Quinfecta" icon="🎯" error={submitAttempted && quinfecta.some(q => !q)}
+          badge={quinfecta.every(Boolean) ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={quinfecta.every(Boolean) ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
+          <Hint>Predict the final five in finishing order. Exact place +5, one place off +2, all five exact +10 bonus. Five different survivors.</Hint>
+          {QUIN_PLACES.map((label, i) => {
+            const key = `q${i}` as PickerKey;
+            const id = quinfecta[i];
+            const dupe = !!id && quinfecta.some((x, j) => j !== i && x === id);
+            return (
+              <div key={label} className="mb-3">
+                <div className="text-xs font-semibold text-muted mb-1.5">{label}</div>
+                <Chosen s={id ? byId.get(id) || null : null} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
+                {openPicker === key && !isLocked && (
+                  <PickerGrid options={rosterEligible} selectedId={id} tribes={tribes}
+                    tags={Object.fromEntries(quinfecta.map((x, j) => [x, `Quinfecta ${QUIN_PLACES[j].split(' ')[0]}`]).filter(([x], j) => x && j !== i))}
+                    onSelect={(sid) => { setQuinfecta(prev => prev.map((v, j) => (j === i ? sid : v))); setOpenPicker(null); setSaveMessage(null); }} />
+                )}
+                {dupe && <ErrorLine>{byId.get(id!)?.name} is in another Quinfecta place too. Each place needs a different survivor.</ErrorLine>}
+              </div>
+            );
+          })}
+        </Section>
+      )}
 
-        {/* ── TITLE ── */}
-        <Section title="Title" icon="💬" error={submitAttempted && !titlePick}
-          badge={titlePick ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={titlePick ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
-          {season.next_episode_title && (
-            <div style={{ marginBottom: '10px', padding: '10px 14px', background: 'rgba(5,169,230,0.06)', border: '1px solid rgba(5,169,230,0.2)', borderRadius: '8px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(63,192,240,0.8)', letterSpacing: '1.5px', textTransform: 'uppercase' as const, marginBottom: '3px' }}>This week’s episode title</div>
-              <div style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>&ldquo;{season.next_episode_title}&rdquo;</div>
+      {/* ── CHIP ── */}
+      <Section title="Chip (optional)" icon="🎰"
+        badge={!chipsAllowed ? 'NOT THIS WEEK' : chip ? 'PLAYING' : 'NONE'}
+        badgeColor={!chipsAllowed ? '#9aa0a8' : chip ? '#3fc0f0' : '#9aa0a8'}>
+        {!chipsAllowed ? (
+          <Hint>Chips can be played in episodes {CHIP_FIRST_EP}–{CHIP_LAST_EP} only.</Hint>
+        ) : (<>
+          <Hint>One chip per episode, and each chip once per season. Tap a chip again to take it back.</Hint>
+          {usedChips.length > 0 && (
+            <div className="text-xs text-muted mb-2.5">
+              Already used: {[...usedChips].sort((a, b) => a.episode - b.episode).map(u => `${PICK_CHIPS.find(c => c.id === u.chip)?.name || u.chip} (E${u.episode})`).join(', ')}
             </div>
           )}
-          <Hint>Who says the episode title? Anyone still in the game, or Jeff. This pick can repeat one of your roster picks. <span style={{ color: 'rgba(255,255,255,0.3)' }}>Correct: +{SLOT_BONUS_TITLE}</span></Hint>
-          <Chosen s={titleSurvivor} placeholder="Choose who says it" open={openPicker === 'title'} onOpen={() => togglePicker('title')} locked={isLocked} />
-          {openPicker === 'title' && !isLocked && (
-            <PickerGrid options={rosterEligible} pinned={titleOnly} selectedId={titlePick} tribes={tribes}
-              onSelect={(sid) => { setTitlePick(sid); setOpenPicker(null); setSaveMessage(null); }} />
-          )}
-        </Section>
-
-        {/* ── POOL ── */}
-        <Section title="Survivor Pool" icon="🌊" error={submitAttempted && poolStatus === 'active' && !poolPick}
-          badge={poolStatus === 'active' ? 'ACTIVE' : poolStatus === 'drowned' ? 'DROWNED' : poolStatus === 'burnt' ? 'BURNT' : poolStatus.toUpperCase()}
-          badgeColor={poolStatus === 'active' ? '#4ade80' : poolStatus === 'drowned' ? '#FF6B35' : '#f87171'}>
-          {poolStatus === 'active' ? (<>
-            <Hint>Pick one survivor you think <b style={{ color: 'rgba(255,255,255,0.7)' }}>will NOT be eliminated</b>. You can’t reuse a previous pool pick.</Hint>
-            <Chosen s={poolPick ? byId.get(poolPick) || null : null} placeholder="Choose a survivor" open={openPicker === 'pool'} onOpen={() => togglePicker('pool')} locked={isLocked} />
-            {openPicker === 'pool' && !isLocked && (
-              <PickerGrid options={poolOptions} selectedId={poolPick} tribes={tribes}
-                onSelect={(sid) => { setPoolPick(sid); setOpenPicker(null); setSaveMessage(null); }} />
-            )}
-          </>) : poolStatus === 'drowned' ? (<>
-            <Hint>You’ve been <b style={{ color: '#FF6B35' }}>Drowned</b>. Pick who <b style={{ color: '#FF6B35' }}>WILL be eliminated</b> for a Backdoor attempt (optional).</Hint>
-            <Chosen s={backdoorPick ? byId.get(backdoorPick) || null : null} placeholder="Choose a Backdoor pick" open={openPicker === 'backdoor'} onOpen={() => togglePicker('backdoor')} locked={isLocked} />
-            {openPicker === 'backdoor' && !isLocked && (
-              <PickerGrid options={rosterEligible} selectedId={backdoorPick} tribes={tribes}
-                onSelect={(sid) => { setBackdoorPick(sid); setOpenPicker(null); setSaveMessage(null); }} />
-            )}
-          </>) : (
-            <p style={{ fontSize: '12px', color: 'rgba(248,113,113,0.7)', margin: 0 }}>You’ve been <b>Burnt</b> — no more pool picks this season.</p>
-          )}
-        </Section>
-
-        {/* ── QUINFECTA (finale only) ── */}
-        {episode?.is_finale && (
-          <Section title="Quinfecta" icon="🎯" error={submitAttempted && quinfecta.some(q => !q)}
-            badge={quinfecta.every(Boolean) ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={quinfecta.every(Boolean) ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
-            <Hint>Predict the final five in finishing order. Exact place +5, one place off +2, all five exact +10 bonus. Five different survivors.</Hint>
-            {QUIN_PLACES.map((label, i) => {
-              const key = `q${i}` as PickerKey;
-              const id = quinfecta[i];
-              const dupe = !!id && quinfecta.some((x, j) => j !== i && x === id);
-              return (
-                <div key={label} style={{ marginBottom: '10px' }}>
-                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>{label}</div>
-                  <Chosen s={id ? byId.get(id) || null : null} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
-                  {openPicker === key && !isLocked && (
-                    <PickerGrid options={rosterEligible} selectedId={id} tribes={tribes}
-                      tags={Object.fromEntries(quinfecta.map((x, j) => [x, `Quinfecta ${QUIN_PLACES[j].split(' ')[0]}`]).filter(([x], j) => x && j !== i))}
-                      onSelect={(sid) => { setQuinfecta(prev => prev.map((v, j) => (j === i ? sid : v))); setOpenPicker(null); setSaveMessage(null); }} />
-                  )}
-                  {dupe && <ErrorLine>{byId.get(id!)?.name} is in another Quinfecta place too. Each place needs a different survivor.</ErrorLine>}
-                </div>
-              );
-            })}
-          </Section>
-        )}
-
-        {/* ── CHIP ── */}
-        <Section title="Chip (optional)" icon="🎰"
-          badge={!chipsAllowed ? 'NOT THIS WEEK' : chip ? 'PLAYING' : 'NONE'}
-          badgeColor={!chipsAllowed ? '#9aa0a8' : chip ? '#3fc0f0' : '#9aa0a8'}>
-          {!chipsAllowed ? (
-            <Hint>Chips can be played in episodes {CHIP_FIRST_EP}–{CHIP_LAST_EP} only.</Hint>
-          ) : (<>
-            <Hint>One chip per episode, and each chip once per season. Tap a chip again to take it back.</Hint>
-            {usedChips.length > 0 && (
-              <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginBottom: '10px' }}>
-                Already used: {[...usedChips].sort((a, b) => a.episode - b.episode).map(u => `${PICK_CHIPS.find(c => c.id === u.chip)?.name || u.chip} (E${u.episode})`).join(', ')}
-              </div>
-            )}
-            {availableChips.length === 0 && <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>You’ve used all four chips.</div>}
+          {availableChips.length === 0 && <div className="text-sm text-muted">You’ve used all four chips.</div>}
+          <div className="space-y-2">
             {availableChips.map(c => {
               const on = chip === c.id;
               if (isLocked && !on) return null;
               return (
-                <div key={c.id} onClick={() => selectChip(c.id)} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px', marginBottom: '6px', borderRadius: '10px', cursor: isLocked ? 'default' : 'pointer', background: on ? 'rgba(5,169,230,0.1)' : 'rgba(255,255,255,0.02)', border: on ? '1px solid rgba(5,169,230,0.45)' : '1px solid rgba(255,255,255,0.05)' }}>
-                  <span style={{ fontSize: '22px' }}>{c.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '14px', fontWeight: 700, color: on ? '#3fc0f0' : '#fff' }}>{c.name}</div>
-                    <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.45)', marginTop: '2px', lineHeight: 1.4 }}>{c.desc}</div>
+                <button key={c.id} type="button" onClick={() => selectChip(c.id)} disabled={isLocked}
+                  className={cn('w-full flex items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors', on ? 'border-accent bg-accent/10' : 'border-line bg-raised/40 hover:bg-raised')}>
+                  <span className="text-2xl">{c.icon}</span>
+                  <div className="flex-1">
+                    <div className={cn('font-semibold', on ? 'text-accent' : 'text-ink')}>{c.name}</div>
+                    <div className="text-xs text-muted mt-0.5">{c.desc}</div>
                   </div>
-                  <div style={{ width: '20px', height: '20px', borderRadius: '50%', flexShrink: 0, border: on ? '2px solid #05a9e6' : '2px solid rgba(255,255,255,0.15)', background: on ? '#05a9e6' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {on && <span style={{ fontSize: '12px', color: '#0a0a0f', fontWeight: 800 }}>✓</span>}
-                  </div>
-                </div>
+                  <span className={cn('h-5 w-5 rounded-full border-2 inline-flex items-center justify-center shrink-0', on ? 'border-accent bg-accent text-on-accent' : 'border-line')}>{on && <IconCheck size={12} />}</span>
+                </button>
               );
             })}
-            {isLocked && !chip && <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>No chip played this episode.</div>}
+          </div>
+          {isLocked && !chip && <div className="text-sm text-muted">No chip played this episode.</div>}
 
-            {chipDef?.needsSlot && (
-              <div style={{ marginTop: '10px', padding: '12px', borderRadius: '10px', background: 'rgba(5,169,230,0.04)', border: '1px solid rgba(5,169,230,0.2)' }}>
-                <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', marginBottom: '8px' }}>{chipDef.name} applies to</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '6px' }}>
-                  {ROSTER_SLOTS.map(({ key, label }) => {
-                    const on = chipSlot === key;
-                    const pickName = slots[key] ? byId.get(slots[key]!)?.name : null;
-                    return (
-                      <button key={key} disabled={isLocked} onClick={() => { setChipSlot(key); setSaveMessage(null); }} style={{ textAlign: 'left', padding: '8px 10px', borderRadius: '8px', cursor: isLocked ? 'default' : 'pointer', background: on ? 'rgba(5,169,230,0.15)' : 'rgba(255,255,255,0.02)', border: on ? '1px solid rgba(5,169,230,0.5)' : '1px solid rgba(255,255,255,0.06)', color: on ? '#3fc0f0' : 'rgba(255,255,255,0.7)' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 700 }}>{label}</div>
-                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{pickName || 'no pick yet'}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-                {submitAttempted && !chipSlot && <ErrorLine>Choose which slot your {chipDef.name} applies to.</ErrorLine>}
-
-                {chip === 'hedge' && chipSlot && (
-                  <div style={{ marginTop: '12px' }}>
-                    <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', marginBottom: '8px' }}>Hedge backup for {SLOT_LABEL[chipSlot]}</div>
-                    <Chosen s={hedgeAlt ? byId.get(hedgeAlt) || null : null} placeholder="Choose a backup survivor" open={openPicker === 'hedge'} onOpen={() => togglePicker('hedge')} locked={isLocked} />
-                    {openPicker === 'hedge' && !isLocked && (
-                      <PickerGrid options={rosterEligible} selectedId={hedgeAlt} tribes={tribes}
-                        tags={Object.fromEntries(Object.entries(rosterTags).filter(([, t]) => t !== 'Hedge backup'))}
-                        onSelect={(sid) => { setHedgeAlt(sid); setOpenPicker(null); setSaveMessage(null); }} />
-                    )}
-                    {hedgeError && <ErrorLine>{hedgeError}</ErrorLine>}
-                    {submitAttempted && !hedgeAlt && <ErrorLine>Choose your Hedge backup for {SLOT_LABEL[chipSlot]}.</ErrorLine>}
-                  </div>
-                )}
+          {chipDef?.needsSlot && (
+            <div className="mt-3 rounded-xl border border-accent/25 bg-accent/5 p-3">
+              <div className="text-xs font-semibold text-muted mb-2">{chipDef.name} applies to</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {ROSTER_SLOTS.map(({ key, label }) => {
+                  const on = chipSlot === key;
+                  const pickName = slots[key] ? byId.get(slots[key]!)?.name : null;
+                  return (
+                    <button key={key} type="button" disabled={isLocked} onClick={() => { setChipSlot(key); setSaveMessage(null); }}
+                      className={cn('rounded-lg border px-2.5 py-2 text-left', on ? 'border-accent bg-accent/15' : 'border-line bg-surface hover:bg-raised')}>
+                      <div className={cn('text-[13px] font-semibold', on ? 'text-accent' : 'text-ink')}>{label}</div>
+                      <div className="text-[11px] text-muted">{pickName || 'no pick yet'}</div>
+                    </button>
+                  );
+                })}
               </div>
-            )}
-          </>)}
-        </Section>
+              {submitAttempted && !chipSlot && <ErrorLine>Choose which slot your {chipDef.name} applies to.</ErrorLine>}
 
-        {/* ── SUBMIT ── */}
-        <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(transparent,#0a0a0f 20%)', padding: '20px 0 10px', marginTop: '8px' }}>
-          {submitAttempted && issues.length > 0 && !isLocked && (
-            <div style={{ marginBottom: '10px', padding: '12px 14px', borderRadius: '10px', background: 'rgba(20,10,10,0.95)', border: '1px solid rgba(248,113,113,0.35)' }}>
-              <div style={{ fontSize: '11px', fontWeight: 800, letterSpacing: '1px', color: '#f87171', marginBottom: '6px', textTransform: 'uppercase' }}>Before you can submit</div>
-              <ul style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', lineHeight: 1.55, color: 'rgba(255,255,255,0.8)' }}>
-                {issues.map((i, n) => <li key={n}>{i}</li>)}
-              </ul>
+              {chip === 'hedge' && chipSlot && (
+                <div className="mt-3">
+                  <div className="text-xs font-semibold text-muted mb-2">Hedge backup for {SLOT_LABEL[chipSlot]}</div>
+                  <Chosen s={hedgeAlt ? byId.get(hedgeAlt) || null : null} placeholder="Choose a backup survivor" open={openPicker === 'hedge'} onOpen={() => togglePicker('hedge')} locked={isLocked} />
+                  {openPicker === 'hedge' && !isLocked && (
+                    <PickerGrid options={rosterEligible} selectedId={hedgeAlt} tribes={tribes}
+                      tags={Object.fromEntries(Object.entries(rosterTags).filter(([, t]) => t !== 'Hedge backup'))}
+                      onSelect={(sid) => { setHedgeAlt(sid); setOpenPicker(null); setSaveMessage(null); }} />
+                  )}
+                  {hedgeError && <ErrorLine>{hedgeError}</ErrorLine>}
+                  {submitAttempted && !hedgeAlt && <ErrorLine>Choose your Hedge backup for {SLOT_LABEL[chipSlot]}.</ErrorLine>}
+                </div>
+              )}
             </div>
           )}
-          <button onClick={savePicks} disabled={isLocked || saving}
-            style={{ width: '100%', padding: '14px', borderRadius: '10px', border: 'none', cursor: isLocked || saving ? 'default' : 'pointer', fontWeight: 800, fontSize: '15px', letterSpacing: '1.5px', background: isLocked ? 'rgba(248,113,113,0.08)' : 'linear-gradient(135deg,#FF6B35,#FF8F00)', color: isLocked ? 'rgba(248,113,113,0.6)' : '#fff', boxShadow: isLocked ? 'none' : '0 4px 20px rgba(255,107,53,0.3)', opacity: saving ? 0.6 : 1 }}>
-            {isLocked ? '🔒 PICKS LOCKED' : saving ? 'Saving...' : existingPick ? '🔥 UPDATE PICKS' : '🔥 SUBMIT PICKS'}
-          </button>
-          {!isLocked && !submitAttempted && issues.length > 0 && (
-            <div style={{ textAlign: 'center', marginTop: '8px', fontSize: '11px', color: 'rgba(255,255,255,0.35)' }}>{issues.length} thing{issues.length > 1 ? 's' : ''} left to do on your card</div>
-          )}
-        </div>
+        </>)}
+      </Section>
+
+      {/* ── SUBMIT (sticks above the phone tab bar) ── */}
+      <div className="sticky z-30 -mx-4 px-4 pt-3 pb-3 mt-2 bg-gradient-to-t from-canvas via-canvas to-canvas/0" style={{ bottom: 'var(--tabbar-h)' }}>
+        {submitAttempted && issues.length > 0 && !isLocked && (
+          <div className="mb-2.5 rounded-xl border border-negative/35 bg-surface px-3.5 py-3 shadow-pop">
+            <div className="text-xs font-bold text-negative mb-1.5">Before you can submit</div>
+            <ul className="list-disc pl-5 space-y-0.5 text-[13px] text-ink">
+              {issues.map((i, n) => <li key={n}>{i}</li>)}
+            </ul>
+          </div>
+        )}
+        <Button onClick={savePicks} disabled={isLocked || saving} size="lg" className="w-full">
+          {isLocked ? <><IconLock size={16} />Picks locked</> : saving ? 'Saving…' : existingPick ? 'Update picks' : 'Submit picks'}
+        </Button>
+        {!isLocked && !submitAttempted && issues.length > 0 && (
+          <div className="text-center mt-2 text-xs text-muted">{issues.length} thing{issues.length > 1 ? 's' : ''} left to do on your card</div>
+        )}
       </div>
-    </div>
+    </Page>
   );
 }
 

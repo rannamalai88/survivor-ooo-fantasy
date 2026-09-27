@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useSeason } from '@/hooks/useSeason';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { Card, Button, Badge, ManagerAvatar, cn } from '@/components/ui';
 
 export default function LoginPage() {
   const { manager, managers, isLoading, login } = useAuth();
@@ -18,13 +19,7 @@ export default function LoginPage() {
     if (manager) router.push('/');
   }, [manager, router]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}>
-        <div className="text-white/30 text-sm font-medium tracking-wider uppercase">Loading...</div>
-      </div>
-    );
-  }
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center"><div className="skeleton h-10 w-40" /></div>;
 
   if (manager) return null;
 
@@ -64,67 +59,51 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ background: '#0a0a0f' }}>
+    <div className="min-h-screen flex items-center justify-center px-4 py-10 bg-gradient-to-b from-accent/10 via-canvas to-canvas">
       <div className="w-full max-w-md">
-        <div className="text-center mb-10">
-          <div className="text-5xl mb-4">🔥</div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight mb-1">
-            Survivor OOO <span style={{ color: '#FF6B35' }}>Fantasy</span>
-          </h1>
-          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>{season?.name ?? 'Loading...'}</p>
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-3">🔥</div>
+          <h1 className="text-3xl font-bold tracking-tight text-ink">Survivor OOO Fantasy</h1>
+          <p className="text-sm text-muted mt-1">{season?.name ?? 'Survivor'} · Outwit. Outpick. Outlast.</p>
         </div>
 
         {pinPrompt ? (
-          <div className="rounded-2xl p-6" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div className="text-center mb-4">
-              <div className="w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold mx-auto mb-3"
-                style={{ background: 'rgba(255,215,0,0.12)', color: '#FFD54F', border: '2px solid rgba(255,215,0,0.3)' }}>
-                {pinPrompt[0]}
-              </div>
-              <div className="text-sm font-semibold text-white">{pinPrompt}</div>
-              <div className="text-[10px] font-bold uppercase tracking-wider mt-1" style={{ color: '#FFD54F' }}>Commissioner</div>
+          <Card className="p-6">
+            <div className="text-center mb-5">
+              <ManagerAvatar name={pinPrompt} size={52} me className="mx-auto mb-3" />
+              <div className="font-semibold text-ink">{pinPrompt}</div>
+              <Badge tone="accent" className="mt-1">Commissioner</Badge>
             </div>
-            <p className="text-xs text-center mb-4" style={{ color: 'rgba(255,255,255,0.3)' }}>Enter your PIN to sign in</p>
-            <div className="flex gap-2 mb-3">
-              <input type="password" value={pinInput}
+            <label htmlFor="pin" className="block text-sm text-muted text-center mb-3">Enter your PIN to sign in</label>
+            <div className="flex gap-2">
+              <input id="pin" type="password" inputMode="numeric" autoComplete="current-password" value={pinInput}
                 onChange={(e) => { setPinInput(e.target.value); setPinError(null); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') handlePinSubmit(); }}
-                placeholder="Enter PIN" autoFocus
-                className="flex-1 px-3 py-2 rounded-lg text-sm text-white placeholder-white/20 outline-none"
-                style={{ background: 'rgba(255,255,255,0.05)', border: pinError ? '1px solid rgba(255,80,80,0.5)' : '1px solid rgba(255,255,255,0.1)' }} />
-              <button onClick={handlePinSubmit} disabled={pinChecking} className="px-4 py-2 rounded-lg text-sm font-bold"
-                style={{ background: 'rgba(255,107,53,0.15)', color: '#FF6B35', border: '1px solid rgba(255,107,53,0.3)', opacity: pinChecking ? 0.6 : 1 }}>{pinChecking ? '...' : 'Go'}</button>
+                placeholder="PIN" autoFocus
+                className={cn('flex-1 h-11 rounded-xl bg-raised px-3 text-ink placeholder:text-faint border outline-none focus:border-accent', pinError ? 'border-negative' : 'border-line')} />
+              <Button onClick={handlePinSubmit} disabled={pinChecking || !pinInput} size="lg">{pinChecking ? '…' : 'Sign in'}</Button>
             </div>
-            {pinError && <p className="text-xs text-center" style={{ color: '#FF5050' }}>{pinError}</p>}
-            <button onClick={() => { setPinPrompt(null); setPinInput(''); setPinError(null); }}
-              className="w-full text-center text-xs mt-3 py-2" style={{ color: 'rgba(255,255,255,0.2)' }}>Back</button>
-          </div>
+            {pinError && <p className="text-sm text-negative text-center mt-3">{pinError}</p>}
+            <button onClick={() => { setPinPrompt(null); setPinInput(''); setPinError(null); }} className="w-full text-center text-sm text-muted hover:text-ink mt-4">Back</button>
+          </Card>
         ) : (
-          <div className="rounded-2xl p-6" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <h2 className="text-sm font-bold uppercase tracking-widest mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>Sign in as...</h2>
+          <Card className="p-5">
+            <h2 className="text-sm font-semibold text-muted mb-3">Who&apos;s playing?</h2>
             <div className="grid grid-cols-2 gap-2">
               {managers.map((m) => (
                 <button key={m.id} onClick={() => handleSelect(m.name, m.is_commissioner)}
-                  className="text-left px-4 py-3 rounded-xl transition-all duration-200"
-                  style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
-                      style={{ background: m.is_commissioner ? 'rgba(255,215,0,0.12)' : 'rgba(255,107,53,0.12)', color: m.is_commissioner ? '#FFD54F' : '#FF6B35' }}>
-                      {m.name[0]}
-                    </div>
-                    <div>
-                      <div className="text-sm font-semibold text-white">{m.name}</div>
-                      {m.is_commissioner && (
-                        <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#FFD54F' }}>Commissioner</div>
-                      )}
-                    </div>
+                  className="flex items-center gap-3 rounded-xl border border-line bg-raised/40 px-3 py-3 text-left transition-colors hover:border-accent/50 hover:bg-accent/5">
+                  <ManagerAvatar name={m.name} size={34} />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-ink truncate">{m.name}</div>
+                    {m.is_commissioner && <div className="text-[11px] font-medium text-accent">Commissioner</div>}
                   </div>
                 </button>
               ))}
             </div>
-          </div>
+          </Card>
         )}
-        <p className="text-center mt-6 text-xs" style={{ color: 'rgba(255,255,255,0.15)' }}>Private league only</p>
+        <p className="text-center mt-6 text-xs text-faint">Private league · 12 managers · 6 couples</p>
       </div>
     </div>
   );

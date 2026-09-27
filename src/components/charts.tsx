@@ -34,10 +34,14 @@ function niceMax(v: number) {
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow;
 }
 
-function Tooltip({ x, y, width, children }: { x: number; y: number; width: number; children: React.ReactNode }) {
-  const left = Math.min(Math.max(x - 70, 0), Math.max(width - 140, 0));
+function Tooltip({ x, y, width, children, side = false }: { x: number; y: number; width: number; children: React.ReactNode; side?: boolean }) {
+  // side: sit beside the crosshair (inside the plot) instead of above the mark
+  const left = side
+    ? (x > width / 2 ? Math.max(x - 152, 0) : Math.min(x + 12, Math.max(width - 140, 0)))
+    : Math.min(Math.max(x - 70, 0), Math.max(width - 140, 0));
   return (
-    <div className="pointer-events-none absolute z-10 w-[140px] rounded-lg border border-line bg-surface px-2.5 py-2 text-xs shadow-pop" style={{ left, top: Math.max(y - 8, 0), transform: 'translateY(-100%)' }}>
+    <div className="pointer-events-none absolute z-10 w-[140px] rounded-lg border border-line bg-surface px-2.5 py-2 text-xs shadow-pop"
+      style={side ? { left, top: y } : { left, top: Math.max(y - 8, 0), transform: 'translateY(-100%)' }}>
       {children}
     </div>
   );
@@ -127,12 +131,15 @@ export function EpisodeBars({ data, reference, height = 180, valueLabel = 'pts',
 }
 
 // ---- Rank over time (one highlighted manager over the field) -------------------------
-export function RankLines({ series, highlightId, episodes, total, height = 220 }: {
+export function RankLines({ series, highlightId, episodes, total, height = 220, xLabel = (e: number) => `E${e}`, tooltipTitle = (e: number) => `After episode ${e}`, highlightLabel = 'You' }: {
   series: { id: string; name: string; points: { episode: number; rank: number }[] }[];
   highlightId?: string | null;
-  episodes: number[];
+  episodes: number[];          // x positions (episode numbers, or any ordered keys)
   total: number;
   height?: number;
+  xLabel?: (x: number) => string;
+  tooltipTitle?: (x: number) => string;
+  highlightLabel?: string;
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -143,7 +150,7 @@ export function RankLines({ series, highlightId, episodes, total, height = 220 }
   const x = (i: number) => padL + (episodes.length === 1 ? plotW / 2 : (i / (episodes.length - 1)) * plotW);
   const y = (rank: number) => padT + ((rank - 1) / Math.max(total - 1, 1)) * plotH;
   const idx = new Map(episodes.map((e, i) => [e, i]));
-  const path = (pts: { episode: number; rank: number }[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(idx.get(p.episode)!)},${y(p.rank)}`).join(' ');
+  const path = (pts: { episode: number; rank: number }[]) => pts.filter(p => idx.has(p.episode)).map((p, i) => `${i ? 'L' : 'M'}${x(idx.get(p.episode)!)},${y(p.rank)}`).join(' ');
   const hi = series.find(s => s.id === highlightId);
   const others = series.filter(s => s.id !== highlightId);
   const last = hi?.points[hi.points.length - 1];
@@ -168,7 +175,7 @@ export function RankLines({ series, highlightId, episodes, total, height = 220 }
               <text x={padL - 8} y={y(rk) + 3.5} textAnchor="end" className="fill-faint num" fontSize={10}>{formatRank(rk)}</text>
             </g>
           ))}
-          {episodes.map((ep, i) => <text key={ep} x={x(i)} y={height - 6} textAnchor="middle" className="fill-faint" fontSize={10}>E{ep}</text>)}
+          {episodes.map((ep, i) => <text key={ep} x={x(i)} y={height - 6} textAnchor="middle" className="fill-faint" fontSize={10}>{xLabel(ep)}</text>)}
           {others.map(s => episodes.length > 1
             ? <path key={s.id} d={path(s.points)} fill="none" stroke={CTX} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
             : s.points.map(p => <circle key={s.id} cx={x(0)} cy={y(p.rank)} r={3} fill={CTX} />))}
@@ -177,16 +184,16 @@ export function RankLines({ series, highlightId, episodes, total, height = 220 }
             <>
               {episodes.length > 1 && <path d={path(hi.points)} fill="none" stroke={HI} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />}
               {last && <circle cx={x(idx.get(last.episode)!)} cy={y(last.rank)} r={4.5} fill={HI} stroke={SURFACE} strokeWidth={2} />}
-              {last && <text x={x(idx.get(last.episode)!) + 9} y={y(last.rank) + 4} className="fill-ink" fontSize={11} fontWeight={600}>You · {formatRank(last.rank)}</text>}
+              {last && <text x={x(idx.get(last.episode)!) + 9} y={y(last.rank) + 4} className="fill-ink" fontSize={11} fontWeight={600}>{highlightLabel} · {formatRank(last.rank)}</text>}
             </>
           )}
           <rect x={padL - 10} y={padT} width={plotW + 20} height={plotH} fill="transparent" onMouseMove={onMove} onMouseLeave={() => setHover(null)} />
         </svg>
       )}
       {hover !== null && hoverRows.length > 0 && (
-        <Tooltip x={x(hover)} y={padT + 4} width={width}>
-          <div className="text-muted mb-1">After episode {episodes[hover]}</div>
-          <div className="space-y-0.5 max-h-48 overflow-hidden">
+        <Tooltip x={x(hover)} y={0} width={width} side>
+          <div className="text-muted mb-1">{tooltipTitle(episodes[hover])}</div>
+          <div className="space-y-0.5">
             {hoverRows.map(r => (
               <div key={r.s.id} className="flex items-center gap-1.5">
                 <span className="h-0.5 w-3 rounded" style={{ background: r.s.id === highlightId ? HI : CTX }} />

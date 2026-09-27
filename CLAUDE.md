@@ -53,7 +53,18 @@ These are not optional; they exist because violating them has cost real debuggin
 4. **Preview / Calculate** → `calculate { episode, seasonId, dryRun? }`: scores every card into `score_lines` (plain-English `reason` per line), `manager_scores`, fixtures into `h2h_results`, rebuilds `pool_status`, recomputes `manager_totals` (standings + championship points), `episodes.status = scored`. `dryRun` writes nothing. Rejects episodes with no H2H round that aren't the finale (E1 is parsed, never scored).
 5. **Advance** → bumps `seasons.current_episode`. Auto-drowns active Pool managers with no pool pick for the episode just finished (only from E2 on), after a confirm dialog listing them.
 
-**Pages:** `/` home, `/picks`, `/reveals` (cards appear after lock), `/leaderboard` (Standings), `/breakdown/[managerId]/[episode]` (linked from every score), `/my-team` (My Season), `/scoreboard` (Survivor points), `/pool`, `/chips`, `/rules`, `/dynasty`, `/admin`. `/draft` and `/net` are retired notice pages. Shared standings loader: `src/lib/standings.ts`.
+**Pages:** `/` home (matchday hub), `/picks`, `/matchups?ep=N` (cards appear after lock; replaces `/reveals`), `/leaderboard` (Standings: championship, H2H with luck/all-play, weekly cards, couples), `/breakdown/[managerId]/[episode]` (linked from every score), `/managers/[id]` (`/managers/me` = you; replaces `/my-team`), `/survivors` + `/survivors/[id]` (replaces `/scoreboard`), `/recap/[episode]`, `/pool`, `/chips`, `/rules`, `/dynasty`, `/admin`. `/reveals`, `/my-team`, `/scoreboard` redirect; `/draft` and `/net` are retired notice pages.
+
+**Privacy rule for pages:** another manager's picks for an episode that hasn't locked must never be *fetched* (not just hidden) — filter queries to locked episodes (`episodes.lock_at <= now`).
+
+**Shared client data:** `lib/season-context.ts` (season + episodes, 60s cache), `lib/standings.ts` (standings, results, luck, rank history; 30s cache), `lib/recap.ts` (weekly superlatives), `lib/pool.ts` (the Pool walk).
+
+## Design system
+
+- Tokens (spec §7) live in `src/styles/globals.css` as RGB channels, light + dark (`prefers-color-scheme`, overridable via `data-theme` on `<html>`, applied pre-paint in `app/layout.tsx`, stored under `survivor-ooo-theme`). Tailwind maps them: `bg-canvas`, `bg-surface`, `bg-raised`, `text-ink`, `text-muted`, `text-faint`, `border-line`, `text-accent`, `bg-accent/10`, `text-positive`, `text-negative`, `text-warn`, `bg-savu`/`bg-toka`. **Never hardcode hex or `white/…` classes in pages** — every page must work in both themes.
+- Tribe colours are identity only (`tribeColor()` in `components/ui`); blue is the only interactive colour; yellow is never a warning.
+- Components: `components/ui` (Page, PageHeader, Card, Badge, Button, Segmented, SurvivorAvatar, ManagerAvatar, TribeTag, StatTile, ResultPill, Skeleton, EmptyState, Callout), `components/ui/icons`, `components/charts` (EpisodeBars, RankLines, Sparkline — plain SVG; highlight/context colours `--c-chart-hi`/`--c-chart-ctx` were validated with the dataviz palette checker).
+- Shell: `components/layout/Nav.tsx` (top bar + phone bottom tab bar; nav items in `nav-config.tsx`). Sticky page footers must sit at `bottom: var(--tabbar-h)`.
 
 ## Scoring invariants
 
@@ -102,7 +113,6 @@ Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051
 
 ## Open items
 
-- **Quinfecta entry** isn't on the pick card yet (needed for E13; writes `quinfecta_predictions.place_1_id…place_5_id`).
-- **Theming** (spec §7 tokens, light/dark mode) not started.
+- **`dynasty_rankings` view duplicates rows** now that S51 managers share S50 names (24 rows per season). Pages de-duplicate; the view itself should join to one season's managers.
 
 The Pool game received uniformly positive feedback, including the backdoor mechanic. **Do not change the Pool.**

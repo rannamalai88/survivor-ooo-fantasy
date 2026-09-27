@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import AuthGuard from '@/components/auth/AuthGuard';
-import { SEASON_ID, SEASON_NUMBER, TRIBE_COLORS } from '@/lib/constants';
+import { Card, Button, Segmented, TribeTag, cn } from '@/components/ui';
+import { SEASON_ID, SEASON_NUMBER } from '@/lib/constants';
 import { formatRank } from '@/lib/utils';
 
 // ============================================================
@@ -48,32 +49,16 @@ async function postJSON(url: string, body: unknown) {
 // ============================================================
 // Small UI pieces
 // ============================================================
-const Card = ({ children }: { children: React.ReactNode }) => (
-  <div className="bg-white/[0.02] border border-white/[0.06] rounded-xl p-5 mb-4">{children}</div>
-);
 const H2 = ({ children }: { children: React.ReactNode }) => (
-  <h2 className="text-sm font-bold text-white tracking-wider mb-3">{children}</h2>
+  <h2 className="text-[15px] font-semibold text-ink mb-3">{children}</h2>
 );
 const Btn = ({ onClick, disabled, children, variant = 'primary' }: { onClick: () => void; disabled?: boolean; children: React.ReactNode; variant?: 'primary' | 'secondary' }) => (
-  <button onClick={onClick} disabled={disabled}
-    className="px-5 py-2.5 rounded-lg font-bold text-xs tracking-wider transition-all border-none"
-    style={{
-      background: variant === 'primary' ? 'linear-gradient(135deg, #FF6B35, #FF8F00)' : 'rgba(5,169,230,0.12)',
-      color: variant === 'primary' ? '#fff' : '#3fc0f0',
-      border: variant === 'secondary' ? '1px solid rgba(5,169,230,0.35)' : 'none',
-      opacity: disabled ? 0.45 : 1, cursor: disabled ? 'default' : 'pointer',
-    }}>
-    {children}
-  </button>
+  <Button onClick={onClick} disabled={disabled} variant={variant}>{children}</Button>
 );
 const IssueList = ({ title, items, tone }: { title: string; items: string[]; tone: 'error' | 'warn' }) => items.length === 0 ? null : (
-  <div className="rounded-lg p-3 mb-3 text-xs" style={{
-    background: tone === 'error' ? 'rgba(248,113,113,0.08)' : 'rgba(255,107,53,0.07)',
-    border: `1px solid ${tone === 'error' ? 'rgba(248,113,113,0.35)' : 'rgba(255,107,53,0.3)'}`,
-    color: tone === 'error' ? '#f87171' : '#ff9a6b',
-  }}>
-    <div className="font-bold mb-1">{title}</div>
-    <ul className="list-disc pl-5 space-y-0.5 text-white/75">{items.map((m, i) => <li key={i}>{m}</li>)}</ul>
+  <div className={cn('rounded-xl border p-3 mb-3 text-sm', tone === 'error' ? 'bg-negative/10 border-negative/30' : 'bg-warn/10 border-warn/30')}>
+    <div className={cn('font-semibold mb-1', tone === 'error' ? 'text-negative' : 'text-warn')}>{title}</div>
+    <ul className="list-disc pl-5 space-y-0.5 text-ink">{items.map((m, i) => <li key={i}>{m}</li>)}</ul>
   </div>
 );
 
@@ -316,63 +301,55 @@ function AdminContent() {
   const fmtTime = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
   if (loading) {
-    return <div className="max-w-4xl mx-auto px-4 py-12 text-center"><div className="text-4xl mb-4 animate-pulse">🔥</div><p className="text-white/30 text-sm">Loading admin panel...</p></div>;
+    return <div className="max-w-4xl mx-auto px-4 py-12 text-center"><div className="text-4xl mb-4 animate-pulse">🔥</div><p className="text-faint text-sm">Loading admin panel...</p></div>;
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
+    <div className="max-w-5xl mx-auto px-4 pt-5 pb-10 md:pt-8">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
         <div>
-          <h1 className="text-xl font-extrabold text-white tracking-wider">⚙️ Commissioner</h1>
-          <p className="text-white/35 text-xs mt-1">Current episode: {currentEpisode} · Weekly flow: Pull from FSG → Title answer → Preview → Calculate → Advance</p>
+          <h1 className="text-xl font-extrabold text-ink tracking-wider">⚙️ Commissioner</h1>
+          <p className="text-faint text-xs mt-1">Current episode: {currentEpisode} · Weekly flow: Pull from FSG → Title answer → Preview → Calculate → Advance</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-white/40">Episode:</span>
+          <span className="text-xs text-muted">Episode:</span>
           <select value={selectedEpisode} onChange={(e) => setSelectedEpisode(Number(e.target.value))}
-            className="bg-white/5 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white font-semibold">
+            className="bg-raised border border-line rounded-md px-3 py-1.5 text-sm text-ink font-semibold">
             {Array.from({ length: totalEpisodes }, (_, i) => i + 1).map(ep => (
-              <option key={ep} value={ep} className="bg-[#1a1a2e]">Episode {ep}{ep === currentEpisode ? ' (current)' : ''}{ep === 1 ? ' — not scored' : ''}</option>
+              <option key={ep} value={ep}>Episode {ep}{ep === currentEpisode ? ' (current)' : ''}{ep === 1 ? ' — not scored' : ''}</option>
             ))}
           </select>
-          {episodeStatus && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 text-white/50 uppercase tracking-wider">{episodeStatus}</span>}
+          {episodeStatus && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-raised text-muted uppercase tracking-wider">{episodeStatus}</span>}
         </div>
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-4 text-red-400 text-xs">
+        <div className="bg-negative/10 border border-negative/30 rounded-lg p-3 mb-4 text-negative text-xs">
           ❌ {error}
-          <button onClick={() => setError(null)} className="ml-2 text-red-300 underline cursor-pointer bg-transparent border-none">dismiss</button>
+          <button onClick={() => setError(null)} className="ml-2 text-negative underline cursor-pointer bg-transparent border-none">dismiss</button>
         </div>
       )}
-      {success && <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mb-4 text-green-400 text-xs">✅ {success}</div>}
+      {success && <div className="bg-positive/10 border border-positive/30 rounded-lg p-3 mb-4 text-positive text-xs">✅ {success}</div>}
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-white/5 rounded-lg p-1 mb-6 w-fit max-w-full overflow-x-auto">
-        {[
-          { key: 'results' as const, label: '1 · FSG Results' },
-          { key: 'title' as const, label: '2 · Title Answer' },
-          { key: 'calculate' as const, label: '3 · Calculate' },
-          { key: 'season' as const, label: '4 · Advance' },
-          { key: 'flags' as const, label: `🚩 Flags${openFlags.length ? ` (${openFlags.length})` : ''}` },
-          { key: 'tools' as const, label: '🔧 Tools' },
-        ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className="px-4 py-2 rounded-md text-xs font-semibold transition-all cursor-pointer border-none whitespace-nowrap"
-            style={{ background: tab === t.key ? 'rgba(255,107,53,0.15)' : 'transparent', color: tab === t.key ? '#FF6B35' : 'rgba(255,255,255,0.45)' }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Segmented className="mb-6" value={tab} onChange={setTab} options={[
+        { value: 'results', label: '1 · FSG results' },
+        { value: 'title', label: '2 · Title answer' },
+        { value: 'calculate', label: '3 · Calculate' },
+        { value: 'season', label: '4 · Advance' },
+        { value: 'flags', label: `🚩 Flags${openFlags.length ? ` (${openFlags.length})` : ''}` },
+        { value: 'tools', label: 'Tools' },
+      ]} />
 
       {/* ---- 1. FSG RESULTS ---- */}
       {tab === 'results' && (<>
-        <Card>
+        <Card className="mb-4">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
             <H2>Episode {selectedEpisode} — FSG results</H2>
-            <a href={fsgRecapUrl(selectedEpisode)} target="_blank" rel="noreferrer" className="text-xs text-[#3fc0f0] underline">Open FSG recap ↗</a>
+            <a href={fsgRecapUrl(selectedEpisode)} target="_blank" rel="noreferrer" className="text-xs text-accent underline">Open FSG recap ↗</a>
           </div>
-          <p className="text-xs text-white/40 mb-4">Pull reads FSG&apos;s recap page for this episode. Re-pulling is safe — it replaces the episode&apos;s results. FSG usually updates the morning after an episode airs.</p>
+          <p className="text-xs text-muted mb-4">Pull reads FSG&apos;s recap page for this episode. Re-pulling is safe — it replaces the episode&apos;s results. FSG usually updates the morning after an episode airs.</p>
           <Btn onClick={pullFromFSG} disabled={busy === 'pull'}>{busy === 'pull' ? '⏳ Pulling from FSG...' : '🔄 Pull from FSG'}</Btn>
 
           {pullResult && (
@@ -383,7 +360,7 @@ function AdminContent() {
               )}
               <IssueList title="Warnings — results were saved, but check these" items={(pullResult.warnings || []).filter(w => !w.includes('unknown FSG action'))} tone="warn" />
               {pullResult.success && (
-                <div className="text-xs text-white/60 space-y-1">
+                <div className="text-xs text-muted space-y-1">
                   <div>✓ {pullResult.actions} actions saved.</div>
                   {!!pullResult.eliminations?.length && <div>✓ Out of the game: {pullResult.eliminations.map(e => `${e.name} (${e.kind}${e.place ? `, ${formatRank(e.place)} place` : ''})`).join(', ')}</div>}
                   {!!pullResult.tribeChanges?.length && <div>✓ Tribe changes: {pullResult.tribeChanges.join(', ')}</div>}
@@ -393,9 +370,9 @@ function AdminContent() {
           )}
         </Card>
 
-        <Card>
+        <Card className="mb-4">
           <H2>What the scoring engine sees</H2>
-          {!outcome ? <p className="text-xs text-white/40">No results stored for episode {selectedEpisode} yet. Pull from FSG first.</p> : (
+          {!outcome ? <p className="text-xs text-muted">No results stored for episode {selectedEpisode} yet. Pull from FSG first.</p> : (
             <div className="grid sm:grid-cols-2 gap-3 text-xs">
               {[
                 { label: '🍖 Reward winners', value: outcome.reward_happened ? outcome.reward_winners.map(nameOf).join(', ') : 'No reward challenge (Reward slot scores base points only)' },
@@ -403,26 +380,26 @@ function AdminContent() {
                 { label: '🔥 Left the game', value: outcome.departures.length ? outcome.departures.map(nameOf).join(', ') : 'Nobody' },
                 { label: '📈 Most Other Points', value: outcome.mop_winners.length ? outcome.mop_winners.map(nameOf).join(', ') : 'Nobody scored Other points' },
               ].map(r => (
-                <div key={r.label} className="bg-white/[0.03] rounded-lg p-3">
-                  <div className="text-[10px] font-bold tracking-wider text-white/40 mb-1">{r.label}</div>
-                  <div className="text-white/85">{r.value}</div>
+                <div key={r.label} className="bg-raised/60 rounded-lg p-3">
+                  <div className="text-[10px] font-bold tracking-wider text-muted mb-1">{r.label}</div>
+                  <div className="text-ink">{r.value}</div>
                 </div>
               ))}
             </div>
           )}
         </Card>
 
-        <Card>
+        <Card className="mb-4">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
             <H2>Survivor points &amp; adjustments</H2>
-            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${hasScores ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-white/5 text-white/40 border border-white/10'}`}>{hasScores ? 'LOADED' : 'NO SCORES YET'}</span>
+            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${hasScores ? 'bg-positive/10 text-positive border border-positive/30' : 'bg-raised text-muted border border-line'}`}>{hasScores ? 'LOADED' : 'NO SCORES YET'}</span>
           </div>
-          <p className="text-xs text-white/40 mb-3">Adjustments are added to a survivor&apos;s slot total and are <b>never multiplied</b>. Save, then re-run Calculate.</p>
-          <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
+          <p className="text-xs text-muted mb-3">Adjustments are added to a survivor&apos;s slot total and are <b>never multiplied</b>. Save, then re-run Calculate.</p>
+          <div className="overflow-x-auto rounded-lg border border-line">
             <table className="w-full text-xs border-collapse">
               <thead>
-                <tr className="bg-white/[0.03]">
-                  {['SURVIVOR', 'TRIBE', 'FSG ACTIONS', 'FSG', 'ADJ', 'TOTAL'].map(h => <th key={h} className="text-left p-2.5 text-white/40 font-bold tracking-wider text-[10px]">{h}</th>)}
+                <tr className="bg-raised/60">
+                  {['SURVIVOR', 'TRIBE', 'FSG ACTIONS', 'FSG', 'ADJ', 'TOTAL'].map(h => <th key={h} className="text-left p-2.5 text-muted font-bold tracking-wider text-[10px]">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -431,18 +408,18 @@ function AdminContent() {
                   const adj = adjustments[s.id] || 0;
                   const out = s.eliminated_episode !== null && s.eliminated_episode <= selectedEpisode;
                   return (
-                    <tr key={s.id} className="border-t border-white/[0.03] hover:bg-white/[0.02] align-top">
-                      <td className="p-2.5"><span className={`font-semibold ${out ? 'text-white/35 line-through' : 'text-white/80'}`}>{s.name}</span></td>
-                      <td className="p-2.5"><span className="text-[10px] font-bold" style={{ color: TRIBE_COLORS[s.tribe] || '#9aa0a8' }}>{s.tribe?.toUpperCase()}</span></td>
-                      <td className="p-2.5 text-white/50">{(actionsBy[s.id] || []).map(a => `${a.action} (${a.points})`).join(' · ') || '—'}</td>
-                      <td className="p-2.5 text-white/70 font-semibold">{fsg}</td>
+                    <tr key={s.id} className="border-t border-line hover:bg-raised/50 align-top">
+                      <td className="p-2.5"><span className={`font-semibold ${out ? 'text-faint line-through' : 'text-ink'}`}>{s.name}</span></td>
+                      <td className="p-2.5"><TribeTag tribe={s.tribe} /></td>
+                      <td className="p-2.5 text-muted">{(actionsBy[s.id] || []).map(a => `${a.action} (${a.points})`).join(' · ') || '—'}</td>
+                      <td className="p-2.5 text-ink font-semibold">{fsg}</td>
                       <td className="p-2.5">
                         <input type="number" value={adj || ''} placeholder="0"
                           onChange={(e) => setAdjustments({ ...adjustments, [s.id]: parseInt(e.target.value) || 0 })}
-                          className="w-14 bg-white/5 border border-white/10 rounded px-2 py-1 text-center font-semibold text-xs"
-                          style={{ color: adj < 0 ? '#f87171' : adj > 0 ? '#4ade80' : 'rgba(255,255,255,0.4)' }} />
+                          className="w-14 bg-raised border border-line rounded px-2 py-1 text-center font-semibold text-xs"
+                          style={{ color: adj < 0 ? 'rgb(var(--c-negative))' : adj > 0 ? 'rgb(var(--c-positive))' : undefined }} />
                       </td>
-                      <td className="p-2.5 font-bold text-white">{fsg + adj}</td>
+                      <td className="p-2.5 font-bold text-ink">{fsg + adj}</td>
                     </tr>
                   );
                 })}
@@ -455,18 +432,17 @@ function AdminContent() {
 
       {/* ---- 2. TITLE ANSWER ---- */}
       {tab === 'title' && (
-        <Card>
+        <Card className="mb-4">
           <H2>💬 Episode {selectedEpisode} — who said the title?</H2>
-          <p className="text-xs text-white/40 mb-4">Worth +1 to every manager whose Title pick matches. Jeff is an option.</p>
+          <p className="text-xs text-muted mb-4">Worth +1 to every manager whose Title pick matches. Jeff is an option.</p>
           <input type="text" value={titleText} onChange={(e) => setTitleText(e.target.value)} placeholder="Episode title (optional)"
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/25 mb-4" />
+            className="w-full bg-raised border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-faint mb-4" />
           <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))' }}>
             {[...survivors.filter(s => !s.is_playable), ...playable].map(s => {
               const on = titleAnswerId === s.id;
               return (
                 <button key={s.id} onClick={() => setTitleAnswerId(s.id)}
-                  className="text-left px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer"
-                  style={{ background: on ? 'rgba(5,169,230,0.15)' : 'rgba(255,255,255,0.03)', border: on ? '1px solid rgba(5,169,230,0.5)' : '1px solid rgba(255,255,255,0.06)', color: on ? '#3fc0f0' : 'rgba(255,255,255,0.7)' }}>
+                  className={cn('text-left px-3 py-2 rounded-xl text-sm font-semibold border transition-colors', on ? 'bg-accent/15 border-accent/50 text-accent' : 'bg-raised/60 border-line text-ink hover:bg-raised')}>
                   {s.name}<span className="block text-[9px] opacity-60">{s.tribe}</span>
                 </button>
               );
@@ -474,19 +450,19 @@ function AdminContent() {
           </div>
           <div className="flex items-center gap-3">
             <Btn onClick={saveTitleAnswer} disabled={!titleAnswerId || busy === 'title'}>{busy === 'title' ? '⏳ Saving...' : '💾 Save title answer'}</Btn>
-            {titleSaved && <span className="text-xs text-green-400">Saved: {titleAnswerId ? nameOf(titleAnswerId) : '—'}</span>}
+            {titleSaved && <span className="text-xs text-positive">Saved: {titleAnswerId ? nameOf(titleAnswerId) : '—'}</span>}
           </div>
         </Card>
       )}
 
       {/* ---- 3. CALCULATE ---- */}
       {tab === 'calculate' && (<>
-        <Card>
+        <Card className="mb-4">
           <H2>🧮 Score episode {selectedEpisode}</H2>
           {selectedEpisode === 1 && <IssueList title="Episode 1 is parsed but never scored." items={['There were no picks for the premiere.']} tone="warn" />}
-          <p className="text-xs text-white/40 mb-2"><b>Preview</b> shows every card&apos;s score and fixture result without saving anything. <b>Calculate &amp; save</b> writes scores, H2H, Pool and standings. Both are safe to repeat.</p>
-          <div className="text-xs text-white/60 mb-4 space-y-1">
-            <div>{outcome ? '✓' : '✗'} FSG results {outcome ? 'pulled' : <span className="text-red-400">not pulled yet</span>}</div>
+          <p className="text-xs text-muted mb-2"><b>Preview</b> shows every card&apos;s score and fixture result without saving anything. <b>Calculate &amp; save</b> writes scores, H2H, Pool and standings. Both are safe to repeat.</p>
+          <div className="text-xs text-muted mb-4 space-y-1">
+            <div>{outcome ? '✓' : '✗'} FSG results {outcome ? 'pulled' : <span className="text-negative">not pulled yet</span>}</div>
             <div>{titleSaved ? '✓' : '○'} Title answer {titleSaved ? `recorded (${titleAnswerId ? nameOf(titleAnswerId) : 'nobody'})` : 'not recorded — Title slots will score 0 until you add it and re-run'}</div>
             <div>✓ {submittedIds.length} of {managers.length} cards submitted{missingCards.length ? ` — no card: ${missingCards.map(m => m.name).join(', ')}` : ''}</div>
           </div>
@@ -497,31 +473,31 @@ function AdminContent() {
         </Card>
 
         {calcResult && (
-          <Card>
+          <Card className="mb-4">
             <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
               <H2>{calcResult.dryRun ? 'Preview — nothing saved' : 'Saved results'}</H2>
-              {!calcResult.titleAnswerRecorded && <span className="text-[10px] font-bold text-[#ff9a6b]">Title answer not recorded</span>}
+              {!calcResult.titleAnswerRecorded && <span className="text-[10px] font-bold text-warn">Title answer not recorded</span>}
             </div>
-            <div className="overflow-x-auto rounded-lg border border-white/[0.04]">
+            <div className="overflow-x-auto rounded-lg border border-line">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="bg-white/[0.03]">
-                    {['MANAGER', 'CARD', 'CHIP', 'VS', 'H2H', 'BEAT'].map(h => <th key={h} className="text-left p-2.5 text-white/40 font-bold tracking-wider text-[10px]">{h}</th>)}
+                  <tr className="bg-raised/60">
+                    {['MANAGER', 'CARD', 'CHIP', 'VS', 'H2H', 'BEAT'].map(h => <th key={h} className="text-left p-2.5 text-muted font-bold tracking-wider text-[10px]">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {calcResult.results.map(r => {
                     const mgr = managers.find(m => m.name === r.name);
                     return (
-                      <tr key={r.name} className="border-t border-white/[0.03]">
-                        <td className="p-2.5 font-semibold text-white/85">
+                      <tr key={r.name} className="border-t border-line">
+                        <td className="p-2.5 font-semibold text-ink">
                           {mgr && !calcResult.dryRun ? <Link href={`/breakdown/${mgr.id}/${selectedEpisode}`} className="underline decoration-white/20">{r.name}</Link> : r.name}
                         </td>
-                        <td className="p-2.5 font-bold" style={{ color: r.cardTotal < 0 ? '#f87171' : '#fff' }}>{r.cardTotal}</td>
-                        <td className="p-2.5 text-white/60">{r.chip || '—'}{r.chipNote && <div className="text-[#ff9a6b] text-[10px]">{r.chipNote}</div>}</td>
-                        <td className="p-2.5 text-white/60">{r.opponent || '—'}</td>
-                        <td className="p-2.5 text-white/70">{r.h2hPoints ?? '—'}{r.h2hNote && <div className="text-white/40 text-[10px]">{r.h2hNote}</div>}</td>
-                        <td className="p-2.5 text-white/60">{r.shadowBeat}/{managers.length - 1}</td>
+                        <td className={cn('p-2.5 font-bold num', r.cardTotal < 0 ? 'text-negative' : 'text-ink')}>{r.cardTotal}</td>
+                        <td className="p-2.5 text-muted">{r.chip || '—'}{r.chipNote && <div className="text-warn text-[10px]">{r.chipNote}</div>}</td>
+                        <td className="p-2.5 text-muted">{r.opponent || '—'}</td>
+                        <td className="p-2.5 text-ink">{r.h2hPoints ?? '—'}{r.h2hNote && <div className="text-muted text-[10px]">{r.h2hNote}</div>}</td>
+                        <td className="p-2.5 text-muted">{r.shadowBeat}/{managers.length - 1}</td>
                       </tr>
                     );
                   })}
@@ -534,26 +510,26 @@ function AdminContent() {
 
       {/* ---- 4. ADVANCE ---- */}
       {tab === 'season' && (<>
-        <Card>
+        <Card className="mb-4">
           <H2>📅 Season progress</H2>
           <div className="flex items-center gap-3 mb-2">
-            <span className="text-3xl font-black text-white">Ep {currentEpisode}</span>
-            <span className="text-white/40 text-sm">of {totalEpisodes}</span>
+            <span className="text-3xl font-black text-ink">Ep {currentEpisode}</span>
+            <span className="text-muted text-sm">of {totalEpisodes}</span>
           </div>
-          <p className="text-xs text-white/40">Managers are submitting picks for episode {currentEpisode}. Picks lock at that episode&apos;s lock time in the episodes table.</p>
+          <p className="text-xs text-muted">Managers are submitting picks for episode {currentEpisode}. Picks lock at that episode&apos;s lock time in the episodes table.</p>
         </Card>
-        <Card>
+        <Card className="mb-4">
           <H2>💬 Next episode title (shown on the pick card)</H2>
           <div className="flex gap-2">
             <input type="text" value={nextEpisodeTitle} onChange={(e) => setNextEpisodeTitle(e.target.value)} placeholder={`Episode ${currentEpisode} title`}
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder-white/25" />
+              className="flex-1 bg-raised border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-faint" />
             <Btn onClick={saveNextEpisodeTitle} disabled={busy === 'nextTitle'}>💾 Save</Btn>
           </div>
         </Card>
-        <Card>
+        <Card className="mb-4">
           <H2>🔥 Advance to episode {currentEpisode + 1}</H2>
-          {currentEpisode >= totalEpisodes ? <p className="text-xs text-white/50">Season complete.</p> : (<>
-            <p className="text-xs text-white/40 mb-4">
+          {currentEpisode >= totalEpisodes ? <p className="text-xs text-muted">Season complete.</p> : (<>
+            <p className="text-xs text-muted mb-4">
               Do this after episode {currentEpisode} is scored. It opens episode {currentEpisode + 1} picks.
               {currentEpisode >= 2 ? ' Active Pool managers with no pool pick for this episode are drowned — you\'ll see the list and confirm first.' : ' Nobody is drowned when leaving episode 1 (the Pool starts at episode 2).'}
             </p>
@@ -564,31 +540,31 @@ function AdminContent() {
 
       {/* ---- FLAGS ---- */}
       {tab === 'flags' && (<>
-        <Card>
+        <Card className="mb-4">
           <H2>🚩 Score questions from managers</H2>
-          <p className="text-xs text-white/40 mb-3">Sent from the &quot;This looks wrong&quot; button on a breakdown. Fix the input and re-run Calculate if needed, then mark it resolved.</p>
-          {flags.length === 0 ? <p className="text-xs text-white/50">No flags yet.</p> : (
+          <p className="text-xs text-muted mb-3">Sent from the &quot;This looks wrong&quot; button on a breakdown. Fix the input and re-run Calculate if needed, then mark it resolved.</p>
+          {flags.length === 0 ? <p className="text-xs text-muted">No flags yet.</p> : (
             <div className="space-y-2">
               {flags.map(f => (
-                <div key={f.id} className="rounded-lg p-3 text-xs flex items-start gap-3 flex-wrap" style={{ background: f.metadata?.resolved ? 'rgba(255,255,255,0.02)' : 'rgba(255,107,53,0.06)', border: `1px solid ${f.metadata?.resolved ? 'rgba(255,255,255,0.06)' : 'rgba(255,107,53,0.25)'}` }}>
+                <div key={f.id} className={cn('rounded-xl p-3 text-sm flex items-start gap-3 flex-wrap border', f.metadata?.resolved ? 'bg-surface border-line' : 'bg-warn/10 border-warn/30')}>
                   <div className="flex-1 min-w-[220px]">
-                    <div className="text-white/85">{f.message}</div>
-                    <div className="text-white/40 mt-1">{fmtTime(f.created_at)}{f.metadata?.resolved ? ' · resolved' : ''}</div>
+                    <div className="text-ink">{f.message}</div>
+                    <div className="text-muted mt-1">{fmtTime(f.created_at)}{f.metadata?.resolved ? ' · resolved' : ''}</div>
                   </div>
                   {f.metadata?.about_manager_id && f.metadata?.episode && (
-                    <Link href={`/breakdown/${f.metadata.about_manager_id}/${f.metadata.episode}`} className="text-[#3fc0f0] underline whitespace-nowrap">Open breakdown</Link>
+                    <Link href={`/breakdown/${f.metadata.about_manager_id}/${f.metadata.episode}`} className="text-accent underline whitespace-nowrap">Open breakdown</Link>
                   )}
-                  {!f.metadata?.resolved && <button onClick={() => resolveFlag(f)} className="px-3 py-1 rounded-md text-[11px] font-bold cursor-pointer" style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>Mark resolved</button>}
+                  {!f.metadata?.resolved && <Button size="sm" variant="secondary" onClick={() => resolveFlag(f)}>Mark resolved</Button>}
                 </div>
               ))}
             </div>
           )}
         </Card>
-        <Card>
+        <Card className="mb-4">
           <H2>Recent activity</H2>
           <div className="space-y-1 text-xs">
             {activity.filter(a => a.metadata?.kind !== 'score_flag').slice(0, 40).map(a => (
-              <div key={a.id} className="flex gap-3 text-white/65"><span className="text-white/35 whitespace-nowrap w-28 shrink-0">{fmtTime(a.created_at)}</span><span>{a.message}</span></div>
+              <div key={a.id} className="flex gap-3 text-muted"><span className="text-faint whitespace-nowrap w-28 shrink-0">{fmtTime(a.created_at)}</span><span>{a.message}</span></div>
             ))}
           </div>
         </Card>
@@ -596,15 +572,15 @@ function AdminContent() {
 
       {/* ---- TOOLS ---- */}
       {tab === 'tools' && (
-        <Card>
+        <Card className="mb-4">
           <H2>🧪 Parser self-test</H2>
-          <p className="text-xs text-white/40 mb-4">Re-reads FSG live and checks the parser and scoring rules against the known Episode 1 results (spec §8). Run it if FSG looks like it changed its page. Writes nothing.</p>
+          <p className="text-xs text-muted mb-4">Re-reads FSG live and checks the parser and scoring rules against the known Episode 1 results (spec §8). Run it if FSG looks like it changed its page. Writes nothing.</p>
           <Btn variant="secondary" onClick={runSelfTest} disabled={busy === 'selftest'}>{busy === 'selftest' ? '⏳ Running...' : 'Run self-test'}</Btn>
           {selfTest && (
             <div className="mt-4 text-xs">
-              <div className="font-bold mb-2" style={{ color: selfTest.success ? '#4ade80' : '#f87171' }}>{selfTest.success ? '✓' : '✗'} {selfTest.passed} / {selfTest.total} checks passed</div>
+              <div className={cn('font-bold mb-2', selfTest.success ? 'text-positive' : 'text-negative')}>{selfTest.success ? '✓' : '✗'} {selfTest.passed} / {selfTest.total} checks passed</div>
               <ul className="space-y-0.5">
-                {selfTest.checks.map(c => <li key={c.name} style={{ color: c.pass ? 'rgba(255,255,255,0.55)' : '#f87171' }}>{c.pass ? '✓' : '✗'} {c.name}{c.detail ? ` — ${c.detail}` : ''}</li>)}
+                {selfTest.checks.map(c => <li key={c.name} className={c.pass ? 'text-muted' : 'text-negative'}>{c.pass ? '✓' : '✗'} {c.name}{c.detail ? ` — ${c.detail}` : ''}</li>)}
               </ul>
             </div>
           )}

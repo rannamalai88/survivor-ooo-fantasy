@@ -1,424 +1,177 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+// ============================================================
+// Survivor Pool — /pool
+// Board of every manager's pool path (same walk as the scoring engine,
+// lib/pool.ts), your unused survivors, and pick popularity.
+// Only locked episodes' picks are fetched.
+// ============================================================
+
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
-import { SEASON_ID, TRIBE_COLORS } from '@/lib/constants';
-import { useSeason } from '@/hooks/useSeason';
-import { walkPool } from '@/lib/pool';
+import { useAuth } from '@/context/AuthContext';
+import { useSeasonContext } from '@/lib/season-context';
+import { SEASON_ID, PLACEMENT_CURVE, WEIGHTS } from '@/lib/constants';
+import { walkPool, type PoolWeek } from '@/lib/pool';
+import { Page, PageHeader, Card, CardHeader, StatTile, Badge, SurvivorAvatar, ManagerAvatar, Skeleton, cn } from '@/components/ui';
 
-interface Manager { id: string; name: string; draft_position: number; }
-interface PoolStatusRow { manager_id: string; status: string; weeks_survived: number; has_immunity_idol: boolean; drowned_episode: number | null; }
-interface WeeklyPickRow { manager_id: string; episode: number; pool_pick_id: string | null; pool_backdoor_id: string | null; }
-interface ManagerTotalRow { manager_id: string; champ_pool: number; }
-interface SurvivorInfo { id: string; name: string; tribe: string; is_active: boolean; eliminated_episode: number | null; }
+interface Survivor { id: string; name: string; tribe: string; photo_url: string | null; is_active: boolean; eliminated_episode: number | null }
+interface PoolRow { manager_id: string; status: string; weeks_survived: number; has_immunity_idol: boolean }
+interface PickRow { manager_id: string; episode: number; pool_pick_id: string | null; pool_backdoor_id: string | null }
 
+const CELL: Record<PoolWeek['type'], { cls: string; icon: string; title: string }> = {
+  safe: { cls: 'bg-positive/10 text-ink', icon: '✓', title: 'Safe' },
+  idol: { cls: 'bg-accent/15 text-ink', icon: '🛡️', title: 'Pick eliminated — saved by the Dynasty Idol' },
+  drowned: { cls: 'bg-negative/15 text-ink', icon: '💀', title: 'Drowned — pick eliminated' },
+  missed: { cls: 'bg-negative/15 text-negative', icon: '💀', title: 'No pick — auto-drowned' },
+  backdoor_hit: { cls: 'bg-positive/15 text-ink', icon: '↩', title: 'Backdoor hit — back in' },
+  backdoor_miss: { cls: 'bg-raised text-muted', icon: '🚪', title: 'Backdoor missed' },
+  none: { cls: 'text-faint', icon: '', title: '' },
+};
+const STATUS_TONE: Record<string, 'positive' | 'negative' | 'neutral' | 'accent'> = { active: 'positive', finished: 'accent', drowned: 'negative', burnt: 'neutral' };
 
-export default function PoolBoardPage() {
+export default function PoolPage() {
+  const { manager, managers } = useAuth();
+  const { season, episodes } = useSeasonContext();
+  const [pool, setPool] = useState<PoolRow[]>([]);
+  const [picks, setPicks] = useState<PickRow[]>([]);
+  const [myPicks, setMyPicks] = useState<PickRow[]>([]);
+  const [survivors, setSurvivors] = useState<Survivor[]>([]);
+  const [champ, setChamp] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [managers, setManagers] = useState<Manager[]>([]);
-  const [poolStatuses, setPoolStatuses] = useState<PoolStatusRow[]>([]);
-  const [weeklyPicks, setWeeklyPicks] = useState<WeeklyPickRow[]>([]);
-  const [survivors, setSurvivors] = useState<SurvivorInfo[]>([]);
-  const [currentEpisode, setCurrentEpisode] = useState(2);
-  const [totalEpisodes, setTotalEpisodes] = useState(13);
-  const [picksLocked, setPicksLocked] = useState(false);
-  const [managerTotals, setManagerTotals] = useState<ManagerTotalRow[]>([]);
-  const [lockAt, setLockAt] = useState<number | null>(null);
-  const { season } = useSeason();
+
+  const lockedEps = useMemo(() => episodes.filter(e => e.number >= 2 && Date.now() >= new Date(e.lock_at).getTime()).map(e => e.number), [episodes]);
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  // The current episode's pool picks stay hidden until that episode locks (episodes.lock_at).
-  useEffect(() => {
-    const tick = () => setPicksLocked(lockAt !== null && Date.now() >= lockAt);
-    tick();
-    const iv = setInterval(tick, 30_000);
-    return () => clearInterval(iv);
-  }, [lockAt]);
-
-  async function loadData() {
-    try {
-      setLoading(true);
-      const [seasonRes, managersRes, poolRes, picksRes, survivorsRes, totalsRes] = await Promise.all([
-        supabase.from('seasons').select('current_episode, total_episodes').eq('id', SEASON_ID).single(),
-        supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
-        supabase.from('pool_status').select('*').eq('season_id', SEASON_ID),
-        supabase.from('weekly_picks').select('manager_id, episode, pool_pick_id, pool_backdoor_id').eq('season_id', SEASON_ID).order('episode'),
-        supabase.from('survivors').select('id, name, tribe, is_active, eliminated_episode').eq('season_id', SEASON_ID).eq('is_playable', true),
+    if (!episodes.length || !manager) return;
+    (async () => {
+      const [p, pk, mine, sv, tot] = await Promise.all([
+        supabase.from('pool_status').select('manager_id, status, weeks_survived, has_immunity_idol').eq('season_id', SEASON_ID),
+        supabase.from('weekly_picks').select('manager_id, episode, pool_pick_id, pool_backdoor_id').eq('season_id', SEASON_ID).in('episode', lockedEps.length ? lockedEps : [-1]),
+        supabase.from('weekly_picks').select('manager_id, episode, pool_pick_id, pool_backdoor_id').eq('season_id', SEASON_ID).eq('manager_id', manager.id),
+        supabase.from('survivors').select('id, name, tribe, photo_url, is_active, eliminated_episode').eq('season_id', SEASON_ID).eq('is_playable', true).order('name'),
         supabase.from('manager_totals').select('manager_id, champ_pool').eq('season_id', SEASON_ID),
       ]);
-      const ep = seasonRes.data?.current_episode || 2;
-      const { data: epRow } = await supabase.from('episodes').select('lock_at').eq('season_id', SEASON_ID).eq('number', ep).maybeSingle();
-      setLockAt(epRow?.lock_at ? new Date(epRow.lock_at).getTime() : null);
-      setCurrentEpisode(seasonRes.data?.current_episode || 2);
-      setTotalEpisodes(seasonRes.data?.total_episodes || 13);
-      setManagers(managersRes.data || []);
-      setPoolStatuses(poolRes.data || []);
-      setWeeklyPicks(picksRes.data || []);
-      setSurvivors(survivorsRes.data || []);
-      setManagerTotals(totalsRes.data || []);
-    } catch (err) {
-      console.error('Failed to load pool data:', err);
-    } finally {
+      setPool((p.data || []) as PoolRow[]);
+      setPicks((pk.data || []) as PickRow[]);
+      setMyPicks((mine.data || []) as PickRow[]);
+      setSurvivors((sv.data || []) as Survivor[]);
+      setChamp(Object.fromEntries((tot.data || []).map((t: any) => [t.manager_id, Number(t.champ_pool)])));
       setLoading(false);
-    }
-  }
+    })();
+  }, [episodes, manager, lockedEps]);
 
-  const survivorMap = useMemo(() => {
-    const map = new Map<string, SurvivorInfo>();
-    survivors.forEach(s => map.set(s.id, s));
-    return map;
-  }, [survivors]);
+  const survMap = useMemo(() => new Map(survivors.map(s => [s.id, s])), [survivors]);
+  const through = lockedEps.length ? Math.max(...lockedEps) : 1;
+  const board = useMemo(() => managers.map(m => {
+    const byEp: Record<number, PickRow> = {};
+    picks.filter(p => p.manager_id === m.id).forEach(p => { byEp[p.episode] = p; });
+    const ps = pool.find(p => p.manager_id === m.id);
+    const walk = walkPool(byEp, survMap, !!ps?.has_immunity_idol, through);
+    return { m, status: ps?.status || 'active', walk, hasIdol: !!ps?.has_immunity_idol };
+  }).sort((a, b) => b.walk.weeksSurvived - a.walk.weeksSurvived || a.m.name.localeCompare(b.m.name)), [managers, picks, pool, survMap, through]);
 
-  const eliminatedByEp = useMemo(() => {
-    const map = new Map<number, string[]>();
-    survivors.filter(s => s.eliminated_episode !== null).forEach(s => {
-      const ep = s.eliminated_episode!;
-      if (!map.has(ep)) map.set(ep, []);
-      map.get(ep)!.push(s.id);
-    });
-    return map;
-  }, [survivors]);
-
-  // Episodes whose pool picks are visible: E2 through the latest locked episode.
-  const episodes = useMemo(() => {
-    const last = picksLocked ? currentEpisode : currentEpisode - 1;
-    return Array.from({ length: Math.max(0, last - 1) }, (_, i) => i + 2);
-  }, [currentEpisode, picksLocked]);
-
-  // Same walk the scoring engine uses (lib/pool.ts), so the board always agrees with it.
-  const poolData = useMemo(() => {
-    const through = episodes.length ? episodes[episodes.length - 1] : 1;
-    return managers.map(m => {
-      const ps = poolStatuses.find(p => p.manager_id === m.id);
-      const byEp: Record<number, { pool_pick_id: string | null; pool_backdoor_id: string | null }> = {};
-      weeklyPicks.filter(p => p.manager_id === m.id).forEach(p => { byEp[p.episode] = p; });
-      const walk = walkPool(byEp, survivorMap, !!ps?.has_immunity_idol, through);
-
-      const epPicks = episodes.map(ep => {
-        const w = walk.weeks.find(x => x.episode === ep);
-        const survivor = w?.survivorId ? survivorMap.get(w.survivorId) : undefined;
-        switch (w?.type) {
-          case 'safe': return { episode: ep, type: 'safe' as const, survivor };
-          case 'idol': return { episode: ep, type: 'idol' as const, survivor };
-          case 'drowned': return { episode: ep, type: 'drowned' as const, survivor };
-          case 'missed': return { episode: ep, type: 'missed' as const, survivor: undefined };
-          case 'backdoor_hit': return { episode: ep, type: 'backdoor' as const, survivor, backdoorCorrect: true };
-          case 'backdoor_miss': return { episode: ep, type: 'backdoor' as const, survivor, backdoorCorrect: false };
-          default: return { episode: ep, type: 'none' as const, survivor: undefined };
-        }
-      });
-
-      return {
-        ...m,
-        status: ps?.status || 'active',
-        weeksSafe: walk.weeksSurvived,
-        hasIdol: !!ps?.has_immunity_idol && !walk.idolUsed,
-        idolEpisode: walk.idolEpisode,
-        drownedEp: ps?.drowned_episode || null,
-        picks: epPicks,
-      };
-    });
-  }, [managers, poolStatuses, weeklyPicks, episodes, survivorMap]);
-
-  const statusCounts = useMemo(() => {
-    const counts = { active: 0, drowned: 0, burnt: 0, finished: 0 };
-    poolData.forEach(m => { const s = m.status as keyof typeof counts; if (counts[s] !== undefined) counts[s]++; });
-    return counts;
-  }, [poolData]);
-
-  const survivorPickCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    weeklyPicks.filter(p => p.episode < currentEpisode).forEach(p => {
-      if (p.pool_pick_id) counts[p.pool_pick_id] = (counts[p.pool_pick_id] || 0) + 1;
-    });
-    return counts;
-  }, [weeklyPicks, currentEpisode]);
-
-  const sortedSurvivors = useMemo(() =>
-    [...survivors].sort((a, b) => {
-      const diff = (survivorPickCounts[b.id] || 0) - (survivorPickCounts[a.id] || 0);
-      return diff !== 0 ? diff : a.name.localeCompare(b.name);
-    }),
-  [survivors, survivorPickCounts]);
-
-  if (loading) return (
-    <div className="max-w-5xl mx-auto px-4 py-12 text-center">
-      <div className="text-4xl mb-4 animate-pulse">🌊</div>
-      <p className="text-white/30 text-sm">Loading pool board...</p>
-    </div>
-  );
-
-  const STATUS_CFG: Record<string, { color: string; bg: string; label: string }> = {
-    active:   { color: '#1ABC9C', bg: 'rgba(26,188,156,0.1)',  label: 'Active'    },
-    finished: { color: '#FFD54F', bg: 'rgba(255,215,0,0.1)',   label: 'Finished!' },
-    drowned:  { color: '#E74C3C', bg: 'rgba(231,76,60,0.1)',   label: 'Drowned'   },
-    burnt:    { color: '#95a5a6', bg: 'rgba(149,165,166,0.1)', label: 'Burnt'     },
-  };
-
-  const totalPoolWeeks = totalEpisodes - 1;
+  const counts = { active: 0, drowned: 0, finished: 0, burnt: 0 } as Record<string, number>;
+  board.forEach(b => { counts[b.status] = (counts[b.status] || 0) + 1; });
+  const myUsed = new Set(myPicks.map(p => p.pool_pick_id).filter(Boolean) as string[]);
+  const myStatus = board.find(b => b.m.id === manager?.id);
+  const available = survivors.filter(s => s.is_active && !myUsed.has(s.id));
+  const popularity = useMemo(() => {
+    const c = new Map<string, number>();
+    picks.forEach(p => { if (p.pool_pick_id) c.set(p.pool_pick_id, (c.get(p.pool_pick_id) || 0) + 1); });
+    return [...c.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  }, [picks]);
+  const shownEps = episodes.filter(e => lockedEps.includes(e.number));
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-6">
-      <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
-        <div>
-          <h1 className="text-xl font-extrabold text-white tracking-wider">🌊 Survivor Pool Board</h1>
-          <p className="text-white/25 text-xs mt-1">{season?.name ?? ''} · Through Episode {currentEpisode - 1}</p>
-        </div>
-        {!picksLocked && (
-          <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
-            ⏱ E{currentEpisode} picks hidden until picks lock
-          </span>
-        )}
+    <Page width="xl">
+      <PageHeader title="Survivor Pool" subtitle="Pick someone who survives each week. One use per survivor. Missed pick = drowned." />
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+        <StatTile label="Active" value={counts.active || 0} />
+        <StatTile label="Drowned" value={counts.drowned || 0} sub="can Backdoor back in" />
+        <StatTile label="Finished" value={counts.finished || 0} />
+        <StatTile label="Burnt" value={counts.burnt || 0} />
       </div>
 
-      <div className="grid grid-cols-4 gap-2 mb-5">
-        {Object.entries(STATUS_CFG).map(([key, cfg]) => (
-          <div key={key} className="text-center rounded-lg p-3" style={{ background: cfg.bg, border: `1px solid ${cfg.color}22` }}>
-            <div className="text-2xl font-extrabold" style={{ color: cfg.color }}>{(statusCounts as any)[key] || 0}</div>
-            <div className="text-[10px] font-bold tracking-wider text-white/25 uppercase mt-0.5">{cfg.label}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-white/[0.03]">
-              <th className="text-left p-2.5 text-white/35 font-bold text-[10px] tracking-wider sticky left-0 bg-[#0d0d15] z-10 min-w-[120px]">MANAGER</th>
-              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">STATUS</th>
-              {episodes.map(ep => {
-                const eliminatedNames = (eliminatedByEp.get(ep) || [])
-                  .map(id => survivorMap.get(id)?.name)
-                  .filter(Boolean) as string[];
-                return (
-                  <th key={ep} className="text-center p-2 text-white/25 font-bold text-[9px] tracking-wider min-w-[80px]">
-                    <div>E{ep}</div>
-                    {eliminatedNames.map(name => (
-                      <div key={name} className="text-[8px] font-semibold text-red-400/60 mt-0.5">✗ {name}</div>
-                    ))}
-                  </th>
-                );
-              })}
-              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">WEEKS SAFE</th>
-              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">CHAMP PTS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {poolData.map(m => {
-              const sc = STATUS_CFG[m.status] || STATUS_CFG.active;
-              return (
-                <tr key={m.id} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
-                  <td className="p-2.5 sticky left-0 bg-[#0d0d15] z-10">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white text-[13px]">{m.name}</span>
-                      {m.hasIdol && <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-300 font-bold" title="Holds the Dynasty Immunity Idol (unused)">🛡️</span>}
-                      {m.idolEpisode && <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/45 font-bold" title={`Dynasty Idol used in episode ${m.idolEpisode}`}>🛡️ used E{m.idolEpisode}</span>}
-                    </div>
-                  </td>
-                  <td className="p-2.5 text-center">
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded tracking-wider" style={{ background: sc.bg, color: sc.color }}>{sc.label}</span>
-                  </td>
-                  {m.picks.map(pick => {
-                    if (pick.type === 'none') return <td key={pick.episode} className="p-1.5 text-center"><span className="text-white/[0.06]">—</span></td>;
-
-                    if (pick.type === 'safe') {
-                      const tColor = pick.survivor ? TRIBE_COLORS[pick.survivor.tribe] : '#fff';
-                      const laterElim = pick.survivor && !pick.survivor.is_active && pick.survivor.eliminated_episode !== pick.episode;
+      {loading ? <Skeleton className="h-80 w-full" /> : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card padded={false} className="lg:col-span-2 overflow-x-auto">
+            <div className="px-4 pt-4 sm:px-5"><CardHeader title="The board" subtitle={season && lockedEps.length === 0 ? 'Picks appear here once Episode 2 locks.' : `Picks for Episode ${season?.current_episode} appear when they lock`} /></div>
+            <table className="data-table">
+              <thead><tr><th>Manager</th><th>Status</th>{shownEps.map(e => <th key={e.number} className="text-center">E{e.number}</th>)}<th className="text-right">Weeks</th><th className="text-right">Champ</th></tr></thead>
+              <tbody>
+                {board.map(({ m, status, walk, hasIdol }) => (
+                  <tr key={m.id} className={cn(m.id === manager?.id && 'bg-accent/[0.07]')}>
+                    <td>
+                      <Link href={`/managers/${m.id}`} className="flex items-center gap-2 hover:underline decoration-line underline-offset-4">
+                        <ManagerAvatar name={m.name} size={24} me={m.id === manager?.id} />
+                        <span className="font-medium text-ink">{m.name}</span>
+                        {hasIdol && <span title={walk.idolUsed ? `Dynasty Idol used in E${walk.idolEpisode}` : 'Holds the Dynasty Idol'} className={walk.idolUsed ? 'opacity-40' : ''}>🛡️</span>}
+                      </Link>
+                    </td>
+                    <td><Badge tone={STATUS_TONE[status] || 'neutral'}>{status}</Badge></td>
+                    {shownEps.map(e => {
+                      const w = walk.weeks.find(x => x.episode === e.number);
+                      const c = CELL[w?.type ?? 'none'];
+                      const s = w?.survivorId ? survMap.get(w.survivorId) : undefined;
                       return (
-                        <td key={pick.episode} className="p-1.5 text-center">
-                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md"
-                            style={{ background: 'rgba(26,188,156,0.08)', border: '1px solid rgba(26,188,156,0.15)' }}
-                            title={laterElim ? `${pick.survivor?.name} later eliminated E${pick.survivor?.eliminated_episode}` : undefined}>
-                            <span className="text-[10px] font-semibold"
-                              style={{ color: laterElim ? 'rgba(255,255,255,0.3)' : tColor, textDecoration: laterElim ? 'line-through' : 'none' }}>
-                              {pick.survivor?.name || '?'}
+                        <td key={e.number} className="text-center">
+                          {w && w.type !== 'none' ? (
+                            <span title={c.title} className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium', c.cls)}>
+                              {s?.name ?? 'No pick'} <span className="text-[10px]">{c.icon}</span>
                             </span>
-                            <span className="text-emerald-400 text-[9px]">✓</span>
-                            {laterElim && <span className="text-[8px] text-red-400/60">💀</span>}
-                          </div>
+                          ) : <span className="text-faint">·</span>}
                         </td>
                       );
-                    }
+                    })}
+                    <td className="num text-right font-bold text-ink">{walk.weeksSurvived}</td>
+                    <td className="num text-right text-muted">{champ[m.id] !== undefined ? Math.round(champ[m.id] * 100) / 100 : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="px-4 sm:px-5 py-3 border-t border-line text-xs text-muted flex flex-wrap gap-x-4 gap-y-1">
+              <span>✓ safe</span><span>💀 drowned / no pick</span><span>🛡️ idol save</span><span>↩ backdoor hit</span><span>🚪 backdoor miss</span>
+            </div>
+          </Card>
 
-                    if (pick.type === 'idol') {
-                      return (
-                        <td key={pick.episode} className="p-1.5 text-center">
-                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md" title="Pick eliminated — saved by the Dynasty Immunity Idol"
-                            style={{ background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.25)' }}>
-                            <span className="text-[10px] font-semibold text-white/60 line-through">{pick.survivor?.name || '?'}</span>
-                            <span className="text-[9px]">🛡️</span>
-                          </div>
-                        </td>
-                      );
-                    }
-
-                    if (pick.type === 'missed') {
-                      return (
-                        <td key={pick.episode} className="p-1.5 text-center">
-                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md" title="No pool pick submitted — auto-eliminated"
-                            style={{ background: 'rgba(231,76,60,0.1)', border: '1px solid rgba(231,76,60,0.2)' }}>
-                            <span className="text-[10px] font-semibold text-red-300/80">No pick</span>
-                            <span className="text-red-400 text-[9px]">💀</span>
-                          </div>
-                        </td>
-                      );
-                    }
-
-                    if (pick.type === 'drowned') {
-                      const tColor = pick.survivor ? TRIBE_COLORS[pick.survivor.tribe] : '#fff';
-                      return (
-                        <td key={pick.episode} className="p-1.5 text-center">
-                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md"
-                            style={{ background: 'rgba(231,76,60,0.1)', border: '1px solid rgba(231,76,60,0.2)' }}>
-                            <span className="text-[10px] font-semibold" style={{ color: tColor }}>{pick.survivor?.name || '?'}</span>
-                            <span className="text-red-400 text-[9px]">💀</span>
-                          </div>
-                        </td>
-                      );
-                    }
-
-                    if (pick.type === 'backdoor') {
-                      const tColor = pick.survivor ? TRIBE_COLORS[pick.survivor.tribe] : '#fff';
-                      const correct = (pick as any).backdoorCorrect;
-                      return (
-                        <td key={pick.episode} className="p-1.5 text-center">
-                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md"
-                            style={{
-                              background: correct ? 'rgba(26,188,156,0.1)' : 'rgba(255,255,255,0.03)',
-                              border: correct ? '1px solid rgba(26,188,156,0.25)' : '1px solid rgba(255,255,255,0.06)',
-                            }}>
-                            <span className="text-[8px]">{correct ? '↩' : '🚪'}</span>
-                            <span className="text-[10px] font-semibold" style={{ color: correct ? '#1ABC9C' : tColor }}>
-                              {pick.survivor?.name || '?'}
-                            </span>
-                            {correct
-                              ? <span className="text-emerald-400 text-[9px] font-bold">✓</span>
-                              : <span className="text-red-400/50 text-[9px]">✗</span>}
-                          </div>
-                        </td>
-                      );
-                    }
-
-                    return null;
-                  })}
-                  <td className="p-2.5 text-center">
-                    <span className="font-bold text-white">{m.weeksSafe}</span>
-                    <span className="text-white/20">/{totalPoolWeeks}</span>
-                  </td>
-                  <td className="p-2.5 text-center">
-                    {(() => {
-                      const t = managerTotals.find(t => t.manager_id === m.id);
-                      const pts = t ? Math.round(Number(t.champ_pool) * 100) / 100 : 0;
-                      return t ? <span className="text-[13px] font-bold text-emerald-400">{pts}</span> : <span className="text-white/20">—</span>;
-                    })()}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Legend */}
-      <div className="mt-4 flex items-center gap-4 flex-wrap text-[10px] text-white/25">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(26,188,156,0.08)', border: '1px solid rgba(26,188,156,0.15)' }}>
-            <span style={{ color: '#1ABC9C' }}>Name</span><span className="text-emerald-400">✓</span>
-          </span>
-          Safe pick
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(26,188,156,0.08)', border: '1px solid rgba(26,188,156,0.15)' }}>
-            <span className="text-white/30 line-through">Name</span><span className="text-emerald-400">✓</span><span>💀</span>
-          </span>
-          Safe pick (survivor later eliminated)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(231,76,60,0.1)', border: '1px solid rgba(231,76,60,0.2)' }}>
-            <span>Name</span><span className="text-red-400">💀</span>
-          </span>
-          Drowned (pick eliminated)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(26,188,156,0.1)', border: '1px solid rgba(26,188,156,0.25)' }}>
-            <span>↩</span><span style={{ color: '#1ABC9C' }}>Name</span><span className="text-emerald-400 font-bold">✓</span>
-          </span>
-          Correct backdoor (reactivated)
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <span>🚪</span><span className="text-white/30">Name</span><span className="text-red-400/50">✗</span>
-          </span>
-          Wrong backdoor
-        </span>
-        <span>🛡️ Dynasty Idol holder (auto-saves one eliminated pick)</span>
-        <span className="flex items-center gap-1.5"><span className="inline-flex px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.25)' }}>🛡️</span> Saved by the idol</span>
-        <span className="flex items-center gap-1.5"><span className="inline-flex px-1.5 py-0.5 rounded text-red-300/80" style={{ background: 'rgba(231,76,60,0.1)' }}>No pick 💀</span> Missed pick = drowned</span>
-      </div>
-
-      <div className="mt-3 bg-white/[0.02] border border-white/[0.04] rounded-lg p-3 text-[11px] text-white/25">
-        <span className="font-bold text-white/40">How the Pool counts:</span>{' '}
-        managers are ranked by weeks survived; that rank earns championship points (12 for 1st down to 0 for 12th) × 1.5. Tied managers split the points for the places they share.
-      </div>
-
-      {/* Survivor Pick Popularity Heatmap */}
-      <div className="mt-8">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div>
-            <h2 className="text-sm font-extrabold text-white tracking-wider">🔥 Survivor Pick Popularity</h2>
-            <p className="text-[10px] text-white/25 mt-0.5">How many managers have used each survivor as a pool pick (out of {managers.length} possible)</p>
-          </div>
-          <div className="flex items-center gap-1 text-[9px] text-white/25">
-            <span>Low</span>
-            {[0.1, 0.3, 0.5, 0.7, 0.9].map(t => <div key={t} className="w-4 h-4 rounded-sm" style={{ background: heatColor(t) }} />)}
-            <span>High</span>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-          {sortedSurvivors.map(s => {
-            const count = survivorPickCounts[s.id] || 0;
-            const ratio = managers.length > 0 ? count / managers.length : 0;
-            const tColor = TRIBE_COLORS[s.tribe] || '#888';
-            const heat = heatColor(ratio);
-            return (
-              <div key={s.id} className="relative rounded-lg p-3 flex items-center gap-2.5"
-                style={{ background: count > 0 ? `linear-gradient(135deg, ${heat}18, ${heat}08)` : 'rgba(255,255,255,0.02)', border: count > 0 ? `1px solid ${heat}35` : '1px solid rgba(255,255,255,0.04)', opacity: s.is_active ? 1 : 0.55 }}>
-                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: tColor }} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[12px] font-semibold truncate" style={{ color: s.is_active ? '#fff' : 'rgba(255,255,255,0.35)' }}>{s.name}</span>
-                    {!s.is_active && <span className="text-[8px] font-bold px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 flex-shrink-0">OUT {s.eliminated_episode ? `E${s.eliminated_episode}` : ''}</span>}
-                  </div>
-                  <div className="text-[9px] font-bold mt-0.5" style={{ color: tColor }}>{s.tribe.toUpperCase()}</div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <div className="text-base font-extrabold leading-none" style={{ color: count > 0 ? heat : 'rgba(255,255,255,0.12)' }}>{count}</div>
-                  <div className="text-[8px] text-white/20 mt-0.5">/{managers.length}</div>
-                </div>
-                {count > 0 && <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-b-lg" style={{ background: heat, opacity: 0.5 }} />}
+          <div className="space-y-4">
+            <Card>
+              <CardHeader title="Your survivors left" subtitle={myStatus?.status === 'drowned' ? "You're drowned — make a Backdoor pick on your card to get back in" : `${available.length} you haven't used`} />
+              <div className="flex flex-wrap gap-1.5">
+                {available.map(s => (
+                  <Link key={s.id} href={`/survivors/${s.id}`} className="inline-flex items-center gap-1.5 rounded-full bg-raised pl-0.5 pr-2.5 py-0.5 text-xs font-medium text-ink hover:bg-line/60">
+                    <SurvivorAvatar name={s.name} tribe={s.tribe} photoUrl={s.photo_url} size={20} />{s.name}
+                  </Link>
+                ))}
               </div>
-            );
-          })}
+            </Card>
+            <Card>
+              <CardHeader title="Most-used pool picks" subtitle="Locked weeks" />
+              {popularity.length === 0 ? <p className="text-sm text-muted">Nothing yet.</p> : (
+                <div className="space-y-1.5">
+                  {popularity.map(([id, n]) => {
+                    const s = survMap.get(id);
+                    return (
+                      <div key={id} className="flex items-center gap-2 text-sm">
+                        {s && <SurvivorAvatar name={s.name} tribe={s.tribe} photoUrl={s.photo_url} size={22} out={!s.is_active} />}
+                        <span className="flex-1 text-ink">{s?.name}</span>
+                        <div className="w-24 h-1.5 rounded-full bg-raised overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(n / managers.length) * 100}%`, background: 'rgb(var(--c-chart-hi))' }} /></div>
+                        <span className="num text-xs text-muted w-5 text-right">{n}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+            <Card className="text-sm text-muted leading-relaxed">
+              <b className="text-ink">How the Pool counts.</b> Managers are ranked by weeks survived; that rank earns {PLACEMENT_CURVE[0]} down to 0 championship points × {WEIGHTS.pool}. Ties split the points. The Dynasty Idol saves its holder&apos;s first eliminated pick.
+            </Card>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </Page>
   );
-}
-
-function heatColor(ratio: number): string {
-  if (ratio <= 0) return '#334155';
-  if (ratio < 0.25) return lerpColor('#3B82F6', '#1ABC9C', ratio / 0.25);
-  if (ratio < 0.5)  return lerpColor('#1ABC9C', '#FFD54F', (ratio - 0.25) / 0.25);
-  if (ratio < 0.75) return lerpColor('#FFD54F', '#FF6B35', (ratio - 0.5) / 0.25);
-  return lerpColor('#FF6B35', '#E74C3C', (ratio - 0.75) / 0.25);
-}
-
-function lerpColor(a: string, b: string, t: number): string {
-  const ah = a.replace('#', ''), bh = b.replace('#', '');
-  const ar = parseInt(ah.slice(0,2),16), ag = parseInt(ah.slice(2,4),16), ab = parseInt(ah.slice(4,6),16);
-  const br = parseInt(bh.slice(0,2),16), bg = parseInt(bh.slice(2,4),16), bb = parseInt(bh.slice(4,6),16);
-  return `#${Math.round(ar+(br-ar)*t).toString(16).padStart(2,'0')}${Math.round(ag+(bg-ag)*t).toString(16).padStart(2,'0')}${Math.round(ab+(bb-ab)*t).toString(16).padStart(2,'0')}`;
 }

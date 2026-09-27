@@ -63,7 +63,10 @@ function ProfileContent() {
       setCouple(cp.data?.label ?? null);
       const nameById = new Map((allMgrs.data || []).map((m: any) => [m.id, m.name]));
       const myName = nameById.get(id);
-      setDynasty(((dyn.data || []) as any[]).filter(d => nameById.get(d.manager_id) === myName).map(d => ({ season_label: d.season_label, rank: d.rank })));
+      // The view can return one row per managers row sharing a name (one per season) — keep one per season.
+      const seen = new Map<string, number>();
+      for (const d of (dyn.data || []) as any[]) if (nameById.get(d.manager_id) === myName && !seen.has(d.season_label)) seen.set(d.season_label, d.rank);
+      setDynasty([...seen.entries()].sort().map(([season_label, rank]) => ({ season_label, rank })));
     })();
   }, [id, isMe, episodes]);
 

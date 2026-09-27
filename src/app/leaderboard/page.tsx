@@ -101,7 +101,7 @@ export default function LeaderboardPage() {
           </Card>
           <Card className="mb-4">
             <CardHeader title="Head-to-head rank by episode" subtitle="You in blue · hover for everyone" />
-            <RankLines series={data.rows.map(r => ({ id: r.managerId, name: r.name, points: r.rankHistory }))} highlightId={manager?.id} episodes={data.scoredEpisodes} total={data.rows.length} />
+            <RankLines series={data.rows.map(r => ({ id: r.managerId, name: r.name, points: r.rankHistory }))} highlightId={manager?.id} episodes={data.scoredEpisodes} total={data.rows.length} height={260} />
           </Card>
           <p className="text-xs text-muted">Win 3 · Draw 1 · Loss 0 (Double Fixture and Point Shield included). <b className="text-ink">All-play</b> is your record if you&apos;d played every card each week. <b className="text-ink">Luck</b> = actual wins − wins your all-play record predicts; positive means your opponents underperformed.</p>
         </>)}

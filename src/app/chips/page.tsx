@@ -2,72 +2,70 @@
 
 // ============================================================
 // Chips — who has played which S51 chip, and when.
-// A chip is only shown once its episode has locked.
+// Only locked episodes are fetched, so nobody sees a chip before lock.
 // ============================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/context/AuthContext';
-import { useSeason } from '@/hooks/useSeason';
+import { useSeasonContext } from '@/lib/season-context';
 import { SEASON_ID, PICK_CHIPS, ROSTER_SLOTS, CHIP_FIRST_EP, CHIP_LAST_EP } from '@/lib/constants';
+import { Page, PageHeader, Card, Badge, ManagerAvatar, Skeleton, cn } from '@/components/ui';
 
 interface Played { manager_id: string; episode: number; chip: string; chip_slot: string | null }
 
 export default function ChipsPage() {
   const { manager, managers } = useAuth();
-  const { season } = useSeason();
+  const { season, episodes } = useSeasonContext();
   const [played, setPlayed] = useState<Played[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      const [{ data: eps }, { data: picks }] = await Promise.all([
-        supabase.from('episodes').select('number, lock_at').eq('season_id', SEASON_ID),
-        supabase.from('weekly_picks').select('manager_id, episode, chip, chip_slot').eq('season_id', SEASON_ID).not('chip', 'is', null),
-      ]);
-      const lockedEps = new Set((eps || []).filter((e: any) => Date.now() >= new Date(e.lock_at).getTime()).map((e: any) => e.number));
-      setPlayed(((picks || []) as Played[]).filter(p => lockedEps.has(p.episode)));
-      setLoading(false);
-    })();
-  }, []);
+    if (!episodes.length) return;
+    const locked = episodes.filter(e => Date.now() >= new Date(e.lock_at).getTime()).map(e => e.number);
+    supabase.from('weekly_picks').select('manager_id, episode, chip, chip_slot').eq('season_id', SEASON_ID).not('chip', 'is', null).in('episode', locked.length ? locked : [-1])
+      .then(({ data }) => { setPlayed((data || []) as Played[]); setLoading(false); });
+  }, [episodes]);
 
   const slotLabel = (k: string | null) => ROSTER_SLOTS.find(s => s.key === k)?.label;
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}><div className="text-white/30 text-sm tracking-wider uppercase">Loading chips...</div></div>;
+  const left = season ? Math.max(0, CHIP_LAST_EP - Math.max(season.current_episode, CHIP_FIRST_EP) + 1) : 0;
+  const counts = useMemo(() => Object.fromEntries(PICK_CHIPS.map(c => [c.id, played.filter(p => p.chip === c.id).length])), [played]);
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0a0a0f' }}>
-      <div className="max-w-5xl mx-auto px-4 py-6">
-        <h1 className="text-xl font-extrabold text-white tracking-wider">🎰 Chips</h1>
-        <p className="text-white/40 text-xs mt-1 mb-5">{season?.name ?? ''} · Episodes {CHIP_FIRST_EP}–{CHIP_LAST_EP} · one chip per episode, each chip once per season · shown after picks lock</p>
+    <Page width="lg">
+      <PageHeader title="Chips" subtitle={`Episodes ${CHIP_FIRST_EP}–${CHIP_LAST_EP} · one per episode · each once per season · ${left} episode${left === 1 ? '' : 's'} left to play them`} />
 
-        <div className="grid sm:grid-cols-2 gap-3 mb-6">
-          {PICK_CHIPS.map(c => (
-            <div key={c.id} className="rounded-xl p-4" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <div className="text-sm font-bold text-white">{c.icon} {c.name}</div>
-              <div className="text-xs text-white/50 mt-1">{c.desc}</div>
-              <div className="text-[10px] text-white/35 mt-2">Played {played.filter(p => p.chip === c.id).length} time{played.filter(p => p.chip === c.id).length === 1 ? '' : 's'} so far</div>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        {PICK_CHIPS.map(c => (
+          <Card key={c.id}>
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">{c.icon}</span>
+              <div className="flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-ink">{c.name}</span>
+                  <Badge>{counts[c.id] || 0} played</Badge>
+                </div>
+                <p className="text-sm text-muted mt-1">{c.desc}</p>
+              </div>
             </div>
-          ))}
-        </div>
+          </Card>
+        ))}
+      </div>
 
-        <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="bg-white/[0.03]">
-                <th className="text-left p-2.5 text-white/45 font-bold tracking-wider text-[10px]">MANAGER</th>
-                {PICK_CHIPS.map(c => <th key={c.id} className="text-left p-2.5 text-white/45 font-bold tracking-wider text-[10px] whitespace-nowrap">{c.icon} {c.name.toUpperCase()}</th>)}
-              </tr>
-            </thead>
+      {loading ? <Skeleton className="h-72 w-full" /> : (
+        <Card padded={false} className="overflow-x-auto">
+          <table className="data-table">
+            <thead><tr><th>Manager</th>{PICK_CHIPS.map(c => <th key={c.id}>{c.icon} {c.name}</th>)}</tr></thead>
             <tbody>
               {managers.map(m => (
-                <tr key={m.id} className="border-t border-white/[0.04]" style={{ background: m.id === manager?.id ? 'rgba(255,107,53,0.08)' : undefined }}>
-                  <td className="p-2.5 font-semibold text-white/90 whitespace-nowrap">{m.name}</td>
+                <tr key={m.id} className={cn(m.id === manager?.id && 'bg-accent/[0.07]')}>
+                  <td><Link href={`/managers/${m.id}`} className="flex items-center gap-2 hover:underline decoration-line underline-offset-4"><ManagerAvatar name={m.name} size={24} me={m.id === manager?.id} /><span className="font-medium text-ink">{m.name}</span></Link></td>
                   {PICK_CHIPS.map(c => {
                     const p = played.find(x => x.manager_id === m.id && x.chip === c.id);
                     return (
-                      <td key={c.id} className="p-2.5 whitespace-nowrap">
-                        {p ? <span className="text-white/85">E{p.episode}{p.chip_slot ? <span className="text-white/45"> · {slotLabel(p.chip_slot)}</span> : ''}</span> : <span className="text-white/25">available</span>}
+                      <td key={c.id}>
+                        {p ? <Link href={`/breakdown/${m.id}/${p.episode}`} className="text-ink hover:underline">E{p.episode}{p.chip_slot && <span className="text-muted"> · {slotLabel(p.chip_slot)}</span>}</Link> : <span className="text-faint">available</span>}
                       </td>
                     );
                   })}
@@ -75,8 +73,9 @@ export default function ChipsPage() {
               ))}
             </tbody>
           </table>
-        </div>
-      </div>
-    </div>
+          <div className="px-4 py-3 border-t border-line text-xs text-muted">Chips show up here once their episode&apos;s picks lock.</div>
+        </Card>
+      )}
+    </Page>
   );
 }
