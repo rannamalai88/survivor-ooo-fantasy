@@ -13,10 +13,10 @@ export function getInitials(name: string): string {
 
 // Format rank with suffix (1st, 2nd, 3rd, etc.)
 export function formatRank(rank: number): string {
-  if (rank === 1) return '1st';
-  if (rank === 2) return '2nd';
-  if (rank === 3) return '3rd';
-  return `${rank}th`;
+  const mod100 = rank % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${rank}th`;
+  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[rank % 10] || 'th';
+  return `${rank}${suffix}`;
 }
 
 // Snake draft order helper
