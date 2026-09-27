@@ -178,7 +178,7 @@ function BreakdownContent() {
             const acts = line.survivor_id ? events.filter(e => e.survivor_id === line.survivor_id) : [];
             const isRoster = ROSTER_SLOTS.some(r => r.key === line.slot);
             const hit = isRoster && line.multiplier > 1;
-            const noEvent = isRoster && /No (reward|immunity) challenge this episode|Nobody scored Other points/.test(line.reason);
+            const noEvent = isRoster && /No (reward|immunity) challenge this episode|Nobody scored Other points|Nobody left the game this episode/.test(line.reason);
             return (
               <div key={line.id} style={{ padding: '16px', borderRadius: '14px', marginBottom: '10px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '10px' }}>

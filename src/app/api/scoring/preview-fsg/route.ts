@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { SEASON_ID, eliminationOrderFromPlace, placeFromEliminationOrder } from '@/lib/constants';
 import { loadFSG, summaryIssues, toEpisodeEvents } from '@/lib/fsg-load';
+import { walkPool } from '@/lib/pool';
 import { deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta, type ScoringContext, type EpisodeEvent } from '@/lib/scoring';
 
 export const dynamic = 'force-dynamic';
@@ -85,6 +86,23 @@ function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: (id: s
   const q2 = scoreQuinfecta(['b', 'a', 'c', null, 'z'], { a: 1, b: 2, c: 3 });
   check('Quinfecta perfect = 35', q.total === 35, JSON.stringify(q));
   check('Quinfecta adjacent/exact mix = 2+2+5 = 9', q2.total === 9, JSON.stringify(q2));
+
+  // Pool walk (lib/pool.ts)
+  const sv = new Map([
+    ['x', { id: 'x', is_active: false, eliminated_episode: 3 }],
+    ['y', { id: 'y', is_active: false, eliminated_episode: 4 }],
+    ['z', { id: 'z', is_active: true, eliminated_episode: null }],
+    ['w', { id: 'w', is_active: false, eliminated_episode: 5 }],
+  ]);
+  const pk = (pool: string | null, backdoor: string | null = null) => ({ pool_pick_id: pool, pool_backdoor_id: backdoor });
+  const pw1 = walkPool({ 2: pk('z'), 3: pk('x'), 4: pk('z') }, sv, false, 4);
+  check('Pool: eliminated pick drowns (no idol)', pw1.status === 'drowned' && pw1.drownedEpisode === 3 && pw1.weeksSurvived === 1, JSON.stringify(pw1));
+  const pw2 = walkPool({ 2: pk('z'), 3: pk('x'), 4: pk('y') }, sv, true, 4);
+  check('Pool: Dynasty Idol saves first eliminated pick, week counts, second drowns', pw2.idolUsed && pw2.idolEpisode === 3 && pw2.status === 'drowned' && pw2.drownedEpisode === 4 && pw2.weeksSurvived === 2, JSON.stringify(pw2));
+  const pw3 = walkPool({ 2: pk('z') }, sv, true, 3);
+  check('Pool: missed pick drowns, idol does not cover it', pw3.status === 'drowned' && pw3.drownedEpisode === 3 && !pw3.idolUsed, JSON.stringify(pw3));
+  const pw4 = walkPool({ 2: pk('z'), 3: pk('x'), 4: pk(null, 'y'), 5: pk('z') }, sv, false, 5);
+  check('Pool: correct backdoor reactivates without incrementing', pw4.status === 'active' && pw4.weeksSurvived === 2 && pw4.weeks[2].type === 'backdoor_hit', JSON.stringify(pw4));
 
   // Spec §8 — E1 regression against the live FSG page
   const e1 = loaded.episodes.find(e => e.episode === 1);

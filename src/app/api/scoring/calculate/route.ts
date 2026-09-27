@@ -9,7 +9,7 @@
 //   3. card_total (may be negative) → manager_scores
 //   4. Resolve fixtures → h2h_results; Double Fixture / Point Shield
 //   5. shadow_beat = how many of the other managers this manager outscored
-//   6. Rebuild pool_status by walking from E2 (UNCHANGED from S50)
+//   6. Rebuild pool_status by walking from E2 (lib/pool.ts)
 //   7. Recompute standings + championship points → manager_totals
 //
 // POST { episode: number, seasonId: string, dryRun?: boolean }
@@ -25,6 +25,7 @@ import {
   deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta,
   type EpisodeEvent, type ScoringContext, type CardInput, type CardResult,
 } from '@/lib/scoring';
+import { walkPool, type PoolPick } from '@/lib/pool';
 
 export const dynamic = 'force-dynamic';
 
@@ -192,45 +193,23 @@ export async function POST(request: NextRequest) {
       if (error) throw error;
     }
 
-    // ── 6. POOL STATUS — canonical recomputation from picks history (UNCHANGED from S50).
-    //    Walk starts at E2 every time. Backdoor reactivation does not increment.
+    // ── 6. POOL STATUS — canonical walk from E2 (lib/pool.ts), incl. Dynasty Idol.
     //    At season's end, any pool-active manager transitions to 'finished'.
     {
-      const picksByMgrEp: Record<string, Record<number, { pool_pick_id: string | null; pool_backdoor_id: string | null }>> = {};
+      const picksByMgrEp: Record<string, Record<number, PoolPick>> = {};
       for (const p of allPicks) {
-        if (p.episode < 2 || p.episode > episode) continue;
         (picksByMgrEp[p.manager_id] ||= {})[p.episode] = { pool_pick_id: p.pool_pick_id, pool_backdoor_id: p.pool_backdoor_id };
       }
-      const { data: existingPool } = await supabase.from('pool_status').select('manager_id, status').eq('season_id', seasonId);
-      const existingStatusByMgr: Record<string, string> = {};
-      for (const p of existingPool || []) existingStatusByMgr[p.manager_id] = p.status;
+      const { data: existingPool } = await supabase.from('pool_status').select('manager_id, status, has_immunity_idol').eq('season_id', seasonId);
+      const survivorMap = new Map(survivors.map((s: any) => [s.id, s]));
 
       for (const mgr of managers) {
-        if (existingStatusByMgr[mgr.id] === 'burnt') continue;
-        const mgrPicks = picksByMgrEp[mgr.id] || {};
-        let status: 'active' | 'drowned' = 'active';
-        let weeksSurvived = 0;
-        let drownedEpisode: number | null = null;
-
-        for (let ep = 2; ep <= episode; ep++) {
-          const pick = mgrPicks[ep];
-          if (status === 'active') {
-            if (pick?.pool_pick_id) {
-              const survivor = survivors.find((s: any) => s.id === pick.pool_pick_id);
-              const eliminatedThisEpOrEarlier = survivor && !survivor.is_active &&
-                survivor.eliminated_episode !== null && survivor.eliminated_episode <= ep;
-              if (eliminatedThisEpOrEarlier) { status = 'drowned'; drownedEpisode = ep; }
-              else weeksSurvived += 1;
-            }
-          } else if (pick?.pool_backdoor_id) {
-            const survivor = survivors.find((s: any) => s.id === pick.pool_backdoor_id);
-            const guessedCorrectly = survivor && !survivor.is_active && survivor.eliminated_episode === ep;
-            if (guessedCorrectly) { status = 'active'; drownedEpisode = null; }
-          }
-        }
-        const finalStatus: 'active' | 'drowned' | 'finished' = isFinaleRun && status === 'active' ? 'finished' : status;
+        const existing: any = (existingPool || []).find((p: any) => p.manager_id === mgr.id);
+        if (existing?.status === 'burnt') continue;
+        const walk = walkPool(picksByMgrEp[mgr.id] || {}, survivorMap, !!existing?.has_immunity_idol, episode);
+        const finalStatus: 'active' | 'drowned' | 'finished' = isFinaleRun && walk.status === 'active' ? 'finished' : walk.status;
         const { error } = await supabase.from('pool_status').upsert(
-          { season_id: seasonId, manager_id: mgr.id, status: finalStatus, weeks_survived: weeksSurvived, drowned_episode: drownedEpisode },
+          { season_id: seasonId, manager_id: mgr.id, status: finalStatus, weeks_survived: walk.weeksSurvived, drowned_episode: walk.drownedEpisode, idol_used: walk.idolUsed },
           { onConflict: 'season_id,manager_id' },
         );
         if (error) throw error;

@@ -100,7 +100,7 @@ export default function RulesPage() {
             <Row left={slot('mop').label} right={PENALTY.mop} color="#f87171" />
           </Box>
           <Rule>Penalties are uncapped — a multi-boot week can stack them. {b('Card totals can be negative.')}</Rule>
-          <Rule>{b('No-event rule:')} if there was no reward challenge, the Reward slot scores base points only — no double, no penalty. The same goes for Immunity with no immunity challenge, and MOP if nobody scored Other points.</Rule>
+          <Rule>{b('No-event rule:')} if there was no reward challenge, the Reward slot scores base points only — no double, no penalty. The same goes for Immunity with no immunity challenge, MOP if nobody scored Other points, and Going Home if nobody leaves the game (base only, no double, no bonus).</Rule>
           <Rule>{b('Most Other Points')} counts every FSG action that isn&apos;t a reward or immunity challenge win (e.g. tree mail, finding an idol). Ties pay everyone tied.</Rule>
           <Rule>{b('Going Home')} pays if your pick leaves for any reason — voted out, quit, or medically evacuated.</Rule>
           <Rule>Commissioner adjustments are added to a slot and are never multiplied.</Rule>
@@ -133,7 +133,7 @@ export default function RulesPage() {
           </div>
           <div style={{ marginTop: '8px', padding: '10px', background: 'rgba(255,215,0,0.04)', borderRadius: '8px', border: '1px solid rgba(255,215,0,0.1)' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFD54F' }}>🛡️ Immunity Idol</div>
-            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginTop: '4px' }}>Previous season&apos;s champion gets one-time auto-protection if their pool pick is eliminated.</div>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginTop: '4px' }}>Previous season&apos;s champion gets one-time auto-protection: the first time their pool pick is eliminated, they stay Active and the week counts as survived. The idol is then used up. It doesn&apos;t cover a missed pick.</div>
           </div>
           <Rule>Pool standing = weeks survived, which feeds the Championship (below).</Rule>
         </Section>

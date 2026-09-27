@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { SEASON_ID, TRIBE_COLORS } from '@/lib/constants';
 import { useSeason } from '@/hooks/useSeason';
+import { walkPool } from '@/lib/pool';
 
 interface Manager { id: string; name: string; draft_position: number; }
 interface PoolStatusRow { manager_id: string; status: string; weeks_survived: number; has_immunity_idol: boolean; drowned_episode: number | null; }
@@ -81,47 +82,46 @@ export default function PoolBoardPage() {
     return map;
   }, [survivors]);
 
+  // Episodes whose pool picks are visible: E2 through the latest locked episode.
   const episodes = useMemo(() => {
-    const allEps = [...new Set(weeklyPicks.map(p => p.episode))].sort((a, b) => a - b);
-    const base = allEps.length > 0 ? allEps : [2];
-    return base.filter(ep => ep !== 1 && !(ep === currentEpisode && !picksLocked));
-  }, [weeklyPicks, currentEpisode, picksLocked]);
+    const last = picksLocked ? currentEpisode : currentEpisode - 1;
+    return Array.from({ length: Math.max(0, last - 1) }, (_, i) => i + 2);
+  }, [currentEpisode, picksLocked]);
 
+  // Same walk the scoring engine uses (lib/pool.ts), so the board always agrees with it.
   const poolData = useMemo(() => {
+    const through = episodes.length ? episodes[episodes.length - 1] : 1;
     return managers.map(m => {
       const ps = poolStatuses.find(p => p.manager_id === m.id);
-      const picks = weeklyPicks.filter(p => p.manager_id === m.id);
+      const byEp: Record<number, { pool_pick_id: string | null; pool_backdoor_id: string | null }> = {};
+      weeklyPicks.filter(p => p.manager_id === m.id).forEach(p => { byEp[p.episode] = p; });
+      const walk = walkPool(byEp, survivorMap, !!ps?.has_immunity_idol, through);
 
       const epPicks = episodes.map(ep => {
-        const pick = picks.find(p => p.episode === ep);
-        if (!pick) return { episode: ep, type: 'none' as const, survivor: null };
-
-        if (pick.pool_pick_id) {
-          const survivor = survivorMap.get(pick.pool_pick_id);
-          const wasEliminated = survivor && survivor.eliminated_episode === ep;
-          return { episode: ep, type: wasEliminated ? 'drowned' as const : 'safe' as const, survivor };
+        const w = walk.weeks.find(x => x.episode === ep);
+        const survivor = w?.survivorId ? survivorMap.get(w.survivorId) : undefined;
+        switch (w?.type) {
+          case 'safe': return { episode: ep, type: 'safe' as const, survivor };
+          case 'idol': return { episode: ep, type: 'idol' as const, survivor };
+          case 'drowned': return { episode: ep, type: 'drowned' as const, survivor };
+          case 'missed': return { episode: ep, type: 'missed' as const, survivor: undefined };
+          case 'backdoor_hit': return { episode: ep, type: 'backdoor' as const, survivor, backdoorCorrect: true };
+          case 'backdoor_miss': return { episode: ep, type: 'backdoor' as const, survivor, backdoorCorrect: false };
+          default: return { episode: ep, type: 'none' as const, survivor: undefined };
         }
-
-        if (pick.pool_backdoor_id) {
-          const survivor = survivorMap.get(pick.pool_backdoor_id);
-          const eliminatedIds = eliminatedByEp.get(ep) || [];
-          const correct = eliminatedIds.includes(pick.pool_backdoor_id);
-          return { episode: ep, type: 'backdoor' as const, survivor, backdoorCorrect: correct };
-        }
-
-        return { episode: ep, type: 'none' as const, survivor: null };
       });
 
       return {
         ...m,
         status: ps?.status || 'active',
-        weeksSafe: epPicks.filter(p => p.type === 'safe').length,
-        hasIdol: ps?.has_immunity_idol || false,
+        weeksSafe: walk.weeksSurvived,
+        hasIdol: !!ps?.has_immunity_idol && !walk.idolUsed,
+        idolEpisode: walk.idolEpisode,
         drownedEp: ps?.drowned_episode || null,
         picks: epPicks,
       };
     });
-  }, [managers, poolStatuses, weeklyPicks, episodes, survivorMap, eliminatedByEp]);
+  }, [managers, poolStatuses, weeklyPicks, episodes, survivorMap]);
 
   const statusCounts = useMemo(() => {
     const counts = { active: 0, drowned: 0, burnt: 0, finished: 0 };
@@ -214,7 +214,8 @@ export default function PoolBoardPage() {
                   <td className="p-2.5 sticky left-0 bg-[#0d0d15] z-10">
                     <div className="flex items-center gap-2">
                       <span className="font-bold text-white text-[13px]">{m.name}</span>
-                      {m.hasIdol && <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-300 font-bold" title="Has Sole Survivor Immunity Idol">🛡️</span>}
+                      {m.hasIdol && <span className="text-[9px] px-1.5 py-0.5 rounded bg-yellow-500/10 text-yellow-300 font-bold" title="Holds the Dynasty Immunity Idol (unused)">🛡️</span>}
+                      {m.idolEpisode && <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/5 text-white/45 font-bold" title={`Dynasty Idol used in episode ${m.idolEpisode}`}>🛡️ used E{m.idolEpisode}</span>}
                     </div>
                   </td>
                   <td className="p-2.5 text-center">
@@ -237,6 +238,30 @@ export default function PoolBoardPage() {
                             </span>
                             <span className="text-emerald-400 text-[9px]">✓</span>
                             {laterElim && <span className="text-[8px] text-red-400/60">💀</span>}
+                          </div>
+                        </td>
+                      );
+                    }
+
+                    if (pick.type === 'idol') {
+                      return (
+                        <td key={pick.episode} className="p-1.5 text-center">
+                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md" title="Pick eliminated — saved by the Dynasty Immunity Idol"
+                            style={{ background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.25)' }}>
+                            <span className="text-[10px] font-semibold text-white/60 line-through">{pick.survivor?.name || '?'}</span>
+                            <span className="text-[9px]">🛡️</span>
+                          </div>
+                        </td>
+                      );
+                    }
+
+                    if (pick.type === 'missed') {
+                      return (
+                        <td key={pick.episode} className="p-1.5 text-center">
+                          <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md" title="No pool pick submitted — auto-eliminated"
+                            style={{ background: 'rgba(231,76,60,0.1)', border: '1px solid rgba(231,76,60,0.2)' }}>
+                            <span className="text-[10px] font-semibold text-red-300/80">No pick</span>
+                            <span className="text-red-400 text-[9px]">💀</span>
                           </div>
                         </td>
                       );
@@ -277,7 +302,7 @@ export default function PoolBoardPage() {
                       );
                     }
 
-                    return <td key={pick.episode} className="p-1.5 text-center">—</td>;
+                    return null;
                   })}
                   <td className="p-2.5 text-center">
                     <span className="font-bold text-white">{m.weeksSafe}</span>
@@ -329,7 +354,9 @@ export default function PoolBoardPage() {
           </span>
           Wrong backdoor
         </span>
-        <span>🛡️ Immunity Idol holder</span>
+        <span>🛡️ Dynasty Idol holder (auto-saves one eliminated pick)</span>
+        <span className="flex items-center gap-1.5"><span className="inline-flex px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.25)' }}>🛡️</span> Saved by the idol</span>
+        <span className="flex items-center gap-1.5"><span className="inline-flex px-1.5 py-0.5 rounded text-red-300/80" style={{ background: 'rgba(231,76,60,0.1)' }}>No pick 💀</span> Missed pick = drowned</span>
       </div>
 
       <div className="mt-3 bg-white/[0.02] border border-white/[0.04] rounded-lg p-3 text-[11px] text-white/25">

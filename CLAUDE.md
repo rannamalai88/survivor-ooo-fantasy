@@ -68,7 +68,7 @@ These are not optional; they exist because violating them has cost real debuggin
 - **Championship:** rank each game (Fantasy = H2H points then card points; Pool = weeks survived; Quinfecta = finale only), map to `PLACEMENT_CURVE`, × `WEIGHTS`; ties split pooled curve points.
 - **Quinfecta:** per place exact +5, one off +2, all five exact +10. Uses FSG place numbering (1 = winner).
 - **`elimination_order` is inverted relative to FSG `Place`:** `elimination_order = CAST_SIZE + 1 − place` (`eliminationOrderFromPlace`). Getting this backwards silently inverts the quinfecta.
-- **Pool recomputation is idempotent** (unchanged from S50). The walk starts at E2 every time and replays the full picks history; `weeks_survived` caps at `episode − 1`. Backdoor reactivation does not increment. `burnt` managers are skipped.
+- **Pool recomputation is idempotent.** One walk in `src/lib/pool.ts` (`walkPool`) is used by both `calculate` and the Pool page. It starts at E2 every time and replays the full picks history; `weeks_survived` caps at `episode − 1`. A missed pool pick while active drowns (matches the rule; S50's walk skipped it). Backdoor reactivation does not increment. **Dynasty Idol:** the `has_immunity_idol` holder's first eliminated pick while active doesn't drown them — the week counts, `idol_used` becomes true; it doesn't cover a missed pick. `burnt` managers are skipped.
 
 ## FSG parser
 
@@ -102,7 +102,6 @@ Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051
 
 ## Open items
 
-- **Pool Dynasty Idol isn't automated.** The rules promise the previous champion a one-time save, but the Pool walk (unchanged from S50) never reads `pool_status.has_immunity_idol`, and a manual status change is overwritten on the next calculate. Needs a commissioner decision before it matters.
 - **Quinfecta entry** isn't on the pick card yet (needed for E13; writes `quinfecta_predictions.place_1_id…place_5_id`).
 - **Theming** (spec §7 tokens, light/dark mode) not started.
 

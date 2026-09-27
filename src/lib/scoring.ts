@@ -20,7 +20,8 @@
 //
 // No-event rule: if no reward challenge happened, the Reward slot scores base
 // points only — no double, no penalty. The same applies to Immunity when no
-// immunity challenge happened, and to MOP when nobody scored Other points.
+// immunity challenge happened, to MOP when nobody scored Other points, and to
+// Going Home when nobody left (it can't hit, so no double and no bonus).
 //
 // Title slot: +1 if the pick said the episode title. Never multiplied.
 // manual_adjustment on a picked survivor passes through UNMULTIPLIED as its
@@ -180,6 +181,7 @@ function scoreSlot(slot: RosterSlot, survivorId: string, ctx: ScoringContext, tr
     else parts.push(`${name} didn't win ${kind}. ${pts(base)}, not doubled.`);
   } else if (slot === 'going_home') {
     if (hit) parts.push(`${name} left the game (${ctx.departureKind[survivorId] || 'departed'}). Slot hit: ${doubled}, plus ${signed(SLOT_BONUS_GOING_HOME)} Going Home bonus.`);
+    else if (o.departures.length === 0) parts.push(`Nobody left the game this episode, so ${name} scores base points only: ${pts(base)}.`);
     else parts.push(`${name} stayed in the game. ${pts(base)}, not doubled.`);
   } else {
     const mine = o.otherPoints[survivorId] || 0;
