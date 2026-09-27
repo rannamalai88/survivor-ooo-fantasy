@@ -23,6 +23,8 @@ export interface StandingRow {
   lost: number;
   form: ('W' | 'D' | 'L')[];         // most recent last
   cards: Record<number, number>;     // episode → card total
+  shadowBeat: number;                // all-play: other managers outscored, summed over episodes
+  shadowGames: number;               // all-play: other managers faced, summed over episodes
   weeksSurvived: number;
   poolStatus: string;
 }
@@ -40,7 +42,7 @@ export async function loadStandings(): Promise<Standings> {
   const [mgrRes, totRes, scoreRes, h2hRes, fxRes, coupleRes, poolRes, epRes, seasonRes] = await Promise.all([
     supabase.from('managers').select('id, name').eq('season_id', SEASON_ID),
     supabase.from('manager_totals').select('*').eq('season_id', SEASON_ID),
-    supabase.from('manager_scores').select('manager_id, episode, card_total').eq('season_id', SEASON_ID),
+    supabase.from('manager_scores').select('manager_id, episode, card_total, shadow_beat').eq('season_id', SEASON_ID),
     supabase.from('h2h_results').select('episode, fixture_id, score_a, score_b').eq('season_id', SEASON_ID),
     supabase.from('fixtures').select('id, manager_a, manager_b').eq('season_id', SEASON_ID),
     supabase.from('couples').select('manager1_id, manager2_id, label').eq('season_id', SEASON_ID),
@@ -59,7 +61,13 @@ export async function loadStandings(): Promise<Standings> {
     const t: any = totals.find((x: any) => x.manager_id === m.id) || {};
     const pool: any = (poolRes.data || []).find((x: any) => x.manager_id === m.id) || {};
     const cards: Record<number, number> = {};
-    for (const s of scores) if (s.manager_id === m.id && s.card_total !== null) cards[s.episode] = s.card_total;
+    let shadowBeat = 0, shadowGames = 0;
+    for (const s of scores) {
+      if (s.manager_id !== m.id || s.card_total === null) continue;
+      cards[s.episode] = s.card_total;
+      shadowBeat += s.shadow_beat || 0;
+      shadowGames += managers.length - 1;
+    }
 
     const form: ('W' | 'D' | 'L')[] = [];
     for (const r of results) {
@@ -89,6 +97,8 @@ export async function loadStandings(): Promise<Standings> {
       lost: form.filter(x => x === 'L').length,
       form,
       cards,
+      shadowBeat,
+      shadowGames,
       weeksSurvived: pool.weeks_survived || 0,
       poolStatus: pool.status || 'active',
     };

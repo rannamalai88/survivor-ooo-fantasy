@@ -104,7 +104,7 @@ export default function LeaderboardPage() {
             <table className="w-full text-xs border-collapse">
               <thead><tr className="bg-white/[0.03]">
                 <th className={th}>#</th><th className={th}>MANAGER</th><th className={th}>P</th><th className={th}>W</th><th className={th}>D</th><th className={th}>L</th>
-                <th className={th}>PTS</th><th className={th}>CARD PTS</th><th className={th}>FORM</th>
+                <th className={th}>PTS</th><th className={th}>CARD PTS</th><th className={th}>ALL-PLAY</th><th className={th}>FORM</th>
               </tr></thead>
               <tbody>
                 {byH2H.map(r => (
@@ -117,6 +117,7 @@ export default function LeaderboardPage() {
                     <td className={`${td} text-white/60`}>{r.lost}</td>
                     <td className={`${td} font-black text-white`}>{r.h2hPoints}</td>
                     <td className={`${td} text-white/60`} style={{ color: r.rawCardPoints < 0 ? '#f87171' : undefined }}>{r.rawCardPoints}</td>
+                    <td className={`${td} text-white/60`} title="How many other managers' cards you outscored, summed over every episode">{r.shadowGames ? `${r.shadowBeat}/${r.shadowGames}` : '—'}</td>
                     <td className={td}>
                       <span className="flex gap-0.5">
                         {r.form.slice(-5).map((f, i) => (
@@ -129,7 +130,7 @@ export default function LeaderboardPage() {
                 ))}
               </tbody>
             </table>
-            <div className="p-3 text-[11px] text-white/40">Win 3 · Draw 1 · Loss 0. Ties in points are broken by total card points. Double Fixture and Point Shield are included in PTS.</div>
+            <div className="p-3 text-[11px] text-white/40">Win 3 · Draw 1 · Loss 0. Ties in points are broken by total card points. Double Fixture and Point Shield are included in PTS. ALL-PLAY is your shadow record: how many other managers&apos; cards you outscored each week, as if you played everyone.</div>
           </div>
         )}
 
