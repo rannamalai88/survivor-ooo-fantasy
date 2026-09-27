@@ -4,19 +4,21 @@ Guidance for Claude Code when working in this repository.
 
 ## Overview
 
-A private fantasy league app for a 12-manager "Survivor OOO" group (6 couples), running alongside CBS's Survivor. Next.js 14 App Router + TypeScript + Tailwind, with Supabase (Postgres + realtime) as the only backend. Deployed on Vercel via `git push` to `main`.
+A private fantasy league app for a 12-manager "Survivor OOO" group (6 couples), running alongside CBS's Survivor. Next.js 14 App Router + TypeScript + Tailwind, with Supabase (Postgres + realtime) as the only backend. Deployed on Vercel via `git push` to `main` (production: https://survivor-ooo-fantasy.vercel.app).
 
-**Currently migrating from Season 50 → Season 51.** See the S51 Migration section below; it is the active workstream and takes precedence over anything else in this file that still describes S50 behavior.
+**Season 51 is live.** `S51_TECHNICAL_SPEC_v2.md` is the implementation contract; read it before changing scoring, the parser, or the pick card. S50 rows stay in the database and must remain readable, but nothing S50-specific is written any more.
 
 ## Commands
 
 ```bash
 npm run dev     # local dev server (http://localhost:3000)
 npm run build   # production build — also the ONLY type check
-npm run lint    # next lint
+npm run lint    # next lint (not configured; prompts interactively)
 ```
 
-There is no test suite. `npm run build` is the type check. Verify behavior by exercising the relevant page against the live Supabase project.
+There is no test suite. `npm run build` is the type check. **Don't run `npm run build` while `npm run dev` is running** — both write `.next/` and the dev server breaks. `npx tsc --noEmit -p .` type-checks without touching `.next/`.
+
+The parser and scoring rules have a regression self-test: `GET /api/scoring/preview-fsg?selftest=1` (also a button on the admin Tools tab). It re-reads FSG live and asserts the spec §8 Episode 1 results plus unit checks on the rules. Run it after touching `fsg-parser.ts` or `scoring.ts`.
 
 Required env vars (`.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SEASON_ID`, `SUPABASE_SERVICE_ROLE_KEY`, `COMMISSIONER_PIN`.
 
@@ -31,73 +33,62 @@ These are not optional; they exist because violating them has cost real debuggin
 3. **Never commit secrets.** No API keys, service-role keys, or commissioner PINs in tracked files. If a credential appears in conversation, tell the user to rotate it immediately and do not use it.
 4. **The live database is the source of truth.** `supabase/migrations/001_initial_schema.sql` is stale. Read the live schema before assuming a column exists.
 5. **Full file replacements over patches** when the change is substantial. The user reviews whole files.
-6. **Re-running an episode is the normal fix.** The `calculate` route is idempotent by design. When a score looks wrong, fix the input and re-run the episode rather than hand-editing derived rows.
+6. **Re-running an episode is the normal fix.** `scrape-fsg` and `calculate` are idempotent by design. When a score looks wrong, fix the input (FSG pull, manual adjustment, title answer) and re-run the episode rather than hand-editing derived rows.
 
 ## Architecture
 
 **Two Supabase access paths.**
 - Pages are all client components (`'use client'`), querying Supabase directly through the anon-key client in `src/lib/supabase/client.ts`.
-- API routes under `src/app/api/scoring/*` create their own service-role client. All scoring writes go through these routes, called only from the commissioner page (`src/app/admin/page.tsx`).
+- API routes under `src/app/api/scoring/*` use the service-role client from `src/lib/supabase/server.ts`. All scoring writes go through these routes, called only from the commissioner page (`src/app/admin/page.tsx`).
 
-**Auth is name-only, not real auth.** `AuthContext` loads every `managers` row; "login" picks a name and saves it to localStorage (`survivor-ooo-manager`). `AuthGuard requireAdmin` gates on `managers.is_commissioner`. RLS is fully permissive, so the anon client can write anything. This is a deliberate tradeoff for a 12-person private league — do not spend effort hardening it unless asked.
+**Auth is name-only, not real auth.** `AuthContext` loads the `managers` rows for `NEXT_PUBLIC_SEASON_ID` (managers are season-scoped and names repeat across seasons — never load them unfiltered); "login" picks a name and saves it to localStorage (`survivor-ooo-manager`). `AuthGuard requireAdmin` gates on `managers.is_commissioner`. RLS is fully permissive, so the anon client can write anything. This is a deliberate tradeoff for a 12-person private league — do not spend effort hardening it unless asked.
 
-**Weekly scoring flow** (commissioner, from the admin page):
+**The game.** No draft, rosters, keepers or captains. Every episode each manager fills a 5-slot card (`/picks`): Reward, Immunity, Going Home, Most Other Points, Title. The card total decides a Head-to-Head fixture (`fixtures`, keyed by round; `episodes.h2h_round` maps episode → round). The Pool runs alongside, unchanged from S50. Picks lock at `episodes.lock_at` — always read it from the table, never compute it from a weekday.
 
-1. **`scrape-fsg`** — fetches FantasySurvivorGame.com season and recap HTML, parses with `src/lib/fsg-parser.ts`, upserts per-survivor `survivor_scores.fsg_points`.
-2. **`override`** — manual fixes: `manual_adjustment` on a survivor-episode (e.g. an idol-in-pocket penalty) and other admin actions.
-3. **`calculate`** (`{ episode, seasonId }`) — recomputes everything for that episode and rewrites the derived tables:
-   - builds each manager's effective roster (drafted `teams` plus chip 4/5 swaps from `weekly_picks`)
-   - **first pass with no chips**, so chip 1 (Assistant Manager) can copy a target's non-chip score without circular stacking
-   - **second pass with chips**, upserts `manager_scores`
-   - recomputes `chips_used`, rebuilds `pool_status` from the full picks history
-   - works out quinfecta actuals, then `manager_totals` and `rank`
+**Weekly commissioner flow** (`/admin`):
 
-**Debug endpoints** exist for parser development (e.g. `/api/scoring/preview-fsg`) to inspect raw HTML and parsed output without writing to the database. Use them before changing parser regexes.
+1. **Pull from FSG** → `scrape-fsg { episode, seasonId }`: parses the recap by FSG id, writes `episode_events`, `episode_outcomes`, `survivor_scores` (continuity, manual adjustments preserved), survivor eliminations (the Pool walk reads `is_active`/`eliminated_episode`), tribe changes, `episodes.status = aired`. Refuses to write on parser errors or unmapped FSG ids; returns warnings for unknown actions and cross-check mismatches.
+2. **Title answer** → `override { action: 'set_net_answer' }` writes `net_answers` (Jeff selectable).
+3. **Adjustments** → `survivor_scores.manual_adjustment` (never multiplied).
+4. **Preview / Calculate** → `calculate { episode, seasonId, dryRun? }`: scores every card into `score_lines` (plain-English `reason` per line), `manager_scores`, fixtures into `h2h_results`, rebuilds `pool_status`, recomputes `manager_totals` (standings + championship points), `episodes.status = scored`. `dryRun` writes nothing. Rejects episodes with no H2H round that aren't the finale (E1 is parsed, never scored).
+5. **Advance** → bumps `seasons.current_episode`. Auto-drowns active Pool managers with no pool pick for the episode just finished (only from E2 on), after a confirm dialog listing them.
+
+**Pages:** `/` home, `/picks`, `/reveals` (cards appear after lock), `/leaderboard` (Standings), `/breakdown/[managerId]/[episode]` (linked from every score), `/my-team` (My Season), `/scoreboard` (Survivor points), `/pool`, `/chips`, `/rules`, `/dynasty`, `/admin`. `/draft` and `/net` are retired notice pages. Shared standings loader: `src/lib/standings.ts`.
 
 ## Scoring invariants
 
-`src/lib/scoring.ts` holds the rules and its doc comments are the spec. These invariants are expensive to re-derive and must not be broken:
+`src/lib/scoring.ts` holds the rules as pure functions; its doc comments are the spec (mirrors spec §4). All numbers live in `src/lib/constants.ts` — `CAST_SIZE`, `PENALTY`, `PLACEMENT_CURVE`, etc. Reference them; never inline `21`, `51`, or point values. The rules page reads the same constants.
 
-- **Multipliers never touch `manual_adjustment`.** Captain 2×, Team Boost 3×, and Super Captain 4× apply to FSG points and the voted-out bonus only.
-- **Captain loss is permanent.** Once a manager's captain is eliminated, `manager_scores.captain_lost` is the source of truth and the privilege never returns. The captain UI is replaced with a tombstone card. *(S51 note: the league is actively debating changing this — see Open Rules Decisions.)*
-- **Voted-out bonus equals `elimination_order`.** On the finale run (`episode === total_episodes`), the Sole Survivor receives a voted-out bonus equal to the full cast size. **This was 24 for S50 and must become 21 for S51.**
-- **Pool recomputation is idempotent.** The canonical walk starts at E2 every time and replays the full picks history. Never blindly increment `weeks_survived`; it caps at `episode - 1`.
-- **Backdoor reactivation does not increment.** After processing active managers, check each drowned manager's `pool_backdoor_id` against the current episode's elimination. On a correct guess, flip status to active *without* incrementing `weeks_survived`.
-- **Chip 5 (Player Add) is excluded from the permanent team** for purposes of the Sole Survivor bonus.
-- **Sole Survivor identification**: `is_active = true` at finale, with a fallback to `elimination_order === <cast size>` for backward compatibility. The hardcoded fallback value must track cast size per season.
-- **Grand total** = fantasy + pool + quinfecta + NET.
-  - Pool = `weeksSurvived / (totalEpisodes − 1) × 0.25 × topFantasyTotal`
-  - NET = 3 per correct guess
-  - Quinfecta = highest *sequential* tier matched across the place columns
-
-<!-- VERIFY: scoring.ts may also contain a separate flat Sole Survivor bonus (+15) applied to the permanent team only. Confirm against the code before relying on either value. -->
+- **Slot:** `base × (hit ? 2 : 1) + bonus + penalty`. Going Home hit +5. Penalty when a non-Going-Home pick leaves: Immunity −5, Reward −3, MOP −3, uncapped. Card totals may be negative.
+- **No-event rule:** no reward challenge → Reward slot scores base only, no double, no penalty. Applied the same way to Immunity (no immunity challenge) and MOP (nobody scored Other points).
+- **`manual_adjustment` is never multiplied** — it is its own `adjustment` score line.
+- **MOP ties pay everyone.** Going Home pays on any departure (voted out, quit/evac, out of game).
+- **Chip order:** Hedge → slot scoring → Triple Down → fixture → Double Fixture / Point Shield. E2–E12 only, one per episode, one use each per season (DB unique index + checked again at scoring time).
+- **H2H:** 3/1/0. Double Fixture doubles only the player's own points; Point Shield turns that player's loss into a draw. Standings tiebreak = cumulative raw card points.
+- **Championship:** rank each game (Fantasy = H2H points then card points; Pool = weeks survived; Quinfecta = finale only), map to `PLACEMENT_CURVE`, × `WEIGHTS`; ties split pooled curve points.
+- **Quinfecta:** per place exact +5, one off +2, all five exact +10. Uses FSG place numbering (1 = winner).
+- **`elimination_order` is inverted relative to FSG `Place`:** `elimination_order = CAST_SIZE + 1 − place` (`eliminationOrderFromPlace`). Getting this backwards silently inverts the quinfecta.
+- **Pool recomputation is idempotent** (unchanged from S50). The walk starts at E2 every time and replays the full picks history; `weeks_survived` caps at `episode − 1`. Backdoor reactivation does not increment. `burnt` managers are skipped.
 
 ## FSG parser
 
-Source: `https://www.fantasysurvivorgame.com`. Server-rendered HTML — Vercel's native `fetch()` works, no headless browser needed. **No login and no FSG "group" is required**; the pages used are public.
+Source: `https://www.fantasysurvivorgame.com`, public server-rendered HTML (no login, no FSG group). `src/lib/fsg-parser.ts` is pure (HTML in, data out); `src/lib/fsg-load.ts` fetches both pages and maps FSG ids to `survivors.fsg_id`; `src/lib/fsg-checks.ts` cross-checks.
 
-- Season/stats page: `/survivors/season/{N}`
-- Episode recaps: `/episode-recap/season/{N}`
+- Recap: `/episode-recap/season/{N}` — episodes are `<h5 id="episodeN">`; summary boxes `<h6 class="mb-0">Immunity</h6><div>Savu</div>`; actions are `<dt>` with `<span class="points">(N)</span>` and a `<dd>` of survivor links; departures are `<dt>` `Voted out` / `Quit/Evac` / `Out of game` with a place `(21st place)`; finale has `Sole survivor`.
+- Stats: `/survivors/season/{N}` — last 7 cells: Surv Pts (cumulative), Out Pts (**ignored**), Total, Rew Wins, Imm Wins, Voted Out, Place.
 
-HTML structure the parser depends on:
-- Survivor names in `<span class="survivorname">`
-- Tribes in `<span class="TableTribeName">`
-- Episode recap actions as `<dt>`/`<dd>` pairs with `<span class="points">(N)</span>`
-- The stats table columns: Surv Pts, Out Pts, Total Pts, Rew Wins, Imm Wins, Voted Out, Place
-
-Parsing rules:
-- **`Surv Pts` is cumulative.** Diff week-over-week to get per-episode points.
-- **`Place` gives elimination order.**
-- **Names need HTML entity decoding.** Nicknames come through encoded (`Angelica &quot;Jelly&quot; Loblack`).
-- **Survivor slugs need URL encoding.** Some contain literal spaces (`/survivors/538-Thien An`).
-- The parser is regex/structure based and will break if FSG changes markup. Fail loudly rather than silently dropping actions — S51 is the "Open Era" and FSG may add scoring categories mid-season.
+Rules:
+- **Identify survivors by the numeric id in `href="/survivors/536-Aaliyah"`. Never match on names.**
+- **Only four strings are challenge wins** (`CHALLENGE_WHITELIST`). Never substring-match "immunity"/"reward" — "Gain an Immunity Idol" is Other.
+- Point values are read from the page, never assumed (FSG re-tunes them between seasons).
+- Unknown actions are scored as Other and surfaced as warnings in the admin panel. Unparseable lines and unmapped ids **block** the write.
+- Cross-checks: summary headers vs itemized list, and each survivor's summed recap points vs cumulative Surv Pts.
 
 ## Database
 
-Run migrations by hand in the Supabase SQL editor. There is no migration tooling. The checked-in schema is stale; the code uses columns and tables absent from it, including:
-- `weekly_picks.swap_out_ids` / `swap_in_ids` / `player_add_id`
-- `manager_scores.captain_lost` / `base_team_points`
-- the `quinfecta_predictions` and `dynasty_rankings` tables
+Run migrations by hand in the Supabase SQL editor. There is no migration tooling. The checked-in `001` schema is stale; S51 tables and columns are in `002`–`005`. S51 derived tables: `episode_events`, `episode_outcomes`, `score_lines`, `h2h_results`; scoring columns on `manager_scores` / `manager_totals`. Retired S50 columns (captain, swaps, `chip_played`, `net_pick_id`, `grand_total`, …) are kept for history and not written, except `fantasy_points`, `grand_total` and `pool_score`, which `calculate` still fills for continuity.
+
+`survivors.tribe` has a CHECK constraint (`Vatu, Kalo, Cila, Savu, Toka, Merge, Host`). If FSG names the merged tribe something else, scrape warns; extend the constraint, then re-pull.
 
 When changing the schema, write the SQL for the user to run **and** add it as a new numbered migration file so the repo catches up over time.
 
@@ -105,48 +96,14 @@ When changing the schema, write the SQL for the user to run **and** add it as a 
 
 Next.js `images.remotePatterns` allows survivor photos from `www.fantasysurvivorgame.com/images/**`.
 
-## S51 Migration
+## S51 facts
 
-Season 51 — "The Open Era." Premieres Wed 2026-09-23. League draft Mon 2026-09-28. 13 episodes, Wednesdays.
+Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051`. 13 episodes (dates in `episodes`; correct the table, not the code, if CBS shifts the schedule). 21 castaways, FSG ids 536–556, plus Jeff (`cast_id` 99, `is_playable = false`, Title slot only). Tribes Savu / Toka; merge colour unknown until it airs. E7 = Couples Week (round 6), E12 = Rivalry Week (round 11). Alli holds the Dynasty Idol.
 
-**Breaking changes from S50:**
+## Open items
 
-| Change | S50 | S51 | Blast radius |
-|---|---|---|---|
-| Cast size | 24 | **21** | quinfecta place columns, sole-survivor fallback, voted-out bonus ceiling, draft math, `cast_id` range |
-| Tribes | 3 (Vatu/Kalo/Cila) | **2** | `survivors.tribe` CHECK constraint, tribe enums, every UI color reference |
-| FSG season | 50 | 51 | `fetchFSGSeasonPage()`, `fetchFSGRecapPage()` |
-| FSG survivor IDs | — | **536–556** (21, sequential) | seed script |
-
-**Cast (21, FSG IDs 536–556):** Aaliyah Puglia, Alexis Levine, An "Thien An" Nguyen, Ana Sani, Angelica "Jelly" Loblack, Brady Booker, Carter Krull, Cristian Chavez, Danny Kilby, Devin Way, Eric Macksoud, Jenna Doore, Kristin Flickinger, Lewis Kelly, Linnea Capobianco, Maggie Nestor, Mike Pinsky, Ori Jean-Charles, Patt Cannaday, Rob Antonson, Sharonda Cox.
-
-**Photo URL patterns:** `/images/51/thumbs/{key}SOLE.jpg` and `/images/51/draftpics/{key}DFT.jpg`, where `{key}` is the lowercase short name. `thien an` contains a space and must be encoded as `%20`.
-
-**Tribe data is not available until after the premiere airs.** As of pre-premiere, FSG reports every survivor's tribe as `Unknown`. Build the seed script now; run it after 2026-09-23.
-
-**Migration checklist:**
-
-- [x] Flip S50 `seasons.status` to `completed`
-- [ ] Create S51 `seasons` row; update `NEXT_PUBLIC_SEASON_ID`
-- [ ] Update `survivors.tribe` CHECK constraint to the two S51 tribe names
-- [ ] Re-seed `managers`, `couples`, `pool_status` for the new `season_id` (these tables are season-scoped)
-- [ ] Seed 21 survivors post-premiere with real tribes
-- [ ] Update `src/lib/constants.ts`: draft order, R5 partner pairings, couples, tribe names/colors, chip windows
-- [ ] Update FSG season number to 51 in `scrape-fsg`
-- [ ] Replace cast-size constants (24 → 21) everywhere, including the sole-survivor `elimination_order` fallback and the finale voted-out bonus
-- [ ] Rework quinfecta place columns (S50 used `place_20th`–`place_24th`)
-- [ ] Assign the dynasty immunity idol to the S50 champion
-- [ ] Verify `isPicksLocked()` against the S51 calendar (Wed 7pm CT deadline; E2 is 2026-09-30)
-
-## Open Rules Decisions
-
-Not yet locked. **Do not hardcode around these until the commissioner confirms.** Driven by S50 exit-survey feedback:
-
-- **Team size** — S50 used 5 per manager because of the expanded 24-person cast. Reverting to 4 is under consideration.
-- **Chip windows** — currently chips are assigned to fixed weeks. Managers want more agency over timing, with guardrails against playing everything at once.
-- **Captain re-designation** — managers want to name any active player as captain, which conflicts with the permanent `captain_lost` rule.
-- **Quinfecta scoring** — the 50-point Sole Survivor award is considered too swingy and gameable via betting markets. A graduated final-5 structure is under consideration. This interacts with the 21-cast place-column change.
-- **NET** — adding Jeff Probst as a selectable option has been requested.
-- **Score explainability** — at least one manager could not reconcile their own total and disengaged rather than audit it. A per-manager score breakdown view is a likely addition.
+- **Pool Dynasty Idol isn't automated.** The rules promise the previous champion a one-time save, but the Pool walk (unchanged from S50) never reads `pool_status.has_immunity_idol`, and a manual status change is overwritten on the next calculate. Needs a commissioner decision before it matters.
+- **Quinfecta entry** isn't on the pick card yet (needed for E13; writes `quinfecta_predictions.place_1_id…place_5_id`).
+- **Theming** (spec §7 tokens, light/dark mode) not started.
 
 The Pool game received uniformly positive feedback, including the backdoor mechanic. **Do not change the Pool.**
