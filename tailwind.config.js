@@ -1,4 +1,8 @@
 /** @type {import('tailwindcss').Config} */
+// Colours map to the CSS variables in src/styles/globals.css, so every class
+// follows the active light/dark theme and supports alpha (e.g. bg-accent/10).
+const token = (name) => `rgb(var(--c-${name}) / <alpha-value>)`;
+
 module.exports = {
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -8,31 +12,34 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Core brand
-        survivor: {
-          flame: '#FF6B35',
-          'flame-dark': '#E55A2B',
-          gold: '#FFD700',
-          dark: '#0d0d15',
-          'dark-card': '#14141f',
-          'dark-border': 'rgba(255,255,255,0.06)',
-        },
-        // Tribe colors
-        tribe: {
-          vatu: '#9B59B6',
-          kalo: '#1ABC9C',
-          cila: '#E67E22',
-        },
-        // Status colors
-        status: {
-          active: '#1ABC9C',
-          drowned: '#E74C3C',
-          burnt: '#95a5a6',
-          finished: '#FFD54F',
-        },
+        canvas: token('canvas'),
+        surface: token('surface'),
+        raised: token('raised'),
+        ink: token('ink'),
+        muted: token('muted'),
+        faint: token('faint'),
+        line: token('line'),
+        accent: token('accent'),
+        'accent-fill': token('accent-fill'),
+        'on-accent': token('on-accent'),
+        positive: token('positive'),
+        negative: token('negative'),
+        warn: token('warn'),
+        savu: token('savu'),
+        'savu-on': token('savu-on'),
+        toka: token('toka'),
+        'toka-on': token('toka-on'),
+      },
+      boxShadow: {
+        card: 'var(--shadow-card)',
+        pop: 'var(--shadow-pop)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['var(--font-inter)', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+      },
+      borderRadius: {
+        xl: '14px',
+        '2xl': '18px',
       },
     },
   },

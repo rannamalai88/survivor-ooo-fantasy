@@ -3,6 +3,7 @@
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { PageSkeleton } from '@/components/ui';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -18,13 +19,7 @@ export default function AuthGuard({ children, requireAdmin = false }: AuthGuardP
     if (!isLoading && requireAdmin && !isCommissioner) router.push('/');
   }, [manager, isLoading, isCommissioner, requireAdmin, router]);
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#0a0a0f' }}>
-        <div className="text-white/30 text-sm font-medium tracking-wider uppercase">Loading...</div>
-      </div>
-    );
-  }
+  if (isLoading) return <PageSkeleton />;
 
   if (!manager) return null;
   if (requireAdmin && !isCommissioner) return null;

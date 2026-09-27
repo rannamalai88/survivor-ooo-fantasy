@@ -81,17 +81,3 @@ export const PENALTY = { immunity: -5, reward: -3, mop: -3 } as const;
 export const CHIP_FIRST_EP = 2;
 export const CHIP_LAST_EP = 12;
 
-// Navigation links (Admin is shown to the commissioner only — see Nav.tsx)
-export const NAV_LINKS = [
-  { href: '/', label: 'Home', icon: '🏠' },
-  { href: '/picks', label: 'Picks', icon: '✅' },
-  { href: '/reveals', label: 'Reveals', icon: '🔓' },
-  { href: '/leaderboard', label: 'Standings', icon: '🏆' },
-  { href: '/my-team', label: 'My Season', icon: '📋' },
-  { href: '/scoreboard', label: 'Survivors', icon: '📊' },
-  { href: '/pool', label: 'Pool', icon: '🌊' },
-  { href: '/chips', label: 'Chips', icon: '🎰' },
-  { href: '/rules', label: 'Rules', icon: '📖' },
-  { href: '/dynasty', label: 'Dynasty', icon: '👑' },
-  { href: '/admin', label: 'Admin', icon: '⚙️' },
-];
