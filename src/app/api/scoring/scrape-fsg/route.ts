@@ -1,297 +1,211 @@
 // src/app/api/scoring/scrape-fsg/route.ts
 // ============================================================
-// Fetches scores from FantasySurvivorGame.com, parses them,
-// and upserts into survivor_scores table.
+// Pulls one episode from FantasySurvivorGame.com and writes:
+//   episode_events    one row per survivor per FSG action (+ departures)
+//   episode_outcomes  reward/immunity/departures/MOP derived from the events
+//   survivor_scores   per-survivor totals + scored_actions JSON (continuity);
+//                     existing manual_adjustment values are preserved
+//   survivors         is_active / eliminated_episode / elimination_order
+//                     (the Pool walk depends on these), tribe changes
+//   episodes.status   scheduled → aired
 //
-// Called by admin panel "Pull Scores from FSG" button.
-// POST body: { episode: number, seasonId: string }
+// Idempotent: re-running replaces that episode's rows.
+// Refuses to write if the parser reports errors or an FSG id can't be mapped.
+// Warnings (unknown actions, cross-check mismatches) are written through but
+// returned to the admin and logged to activity_log.
+//
+// POST { episode: number, seasonId: string }
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import {
-  fetchFSGSeasonPage,
-  fetchFSGRecapPage,
-  parseSeasonScores,
-  parseEpisodeRecap,
-  calculateEpisodeScores,
-} from '@/lib/fsg-parser';
+import { createServiceClient } from '@/lib/supabase/server';
+import { eliminationOrderFromPlace } from '@/lib/constants';
+import { loadFSG, summaryIssues, toEpisodeEvents } from '@/lib/fsg-load';
+import { deriveOutcomes } from '@/lib/scoring';
+
+export const dynamic = 'force-dynamic';
+
+// Must match the survivors_tribe_check constraint in the live database.
+const ALLOWED_TRIBES = ['Vatu', 'Kalo', 'Cila', 'Savu', 'Toka', 'Merge', 'Host'];
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
     const { episode, seasonId } = await request.json();
+    if (!episode || !seasonId) return NextResponse.json({ error: 'Missing episode or seasonId' }, { status: 400 });
 
-    if (!episode || !seasonId) {
-      return NextResponse.json(
-        { error: 'Missing episode or seasonId' },
-        { status: 400 }
-      );
-    }
-
-    // ----------------------------------------------------------------
-    // 1. Fetch and parse BOTH FSG pages
-    // ----------------------------------------------------------------
-    const [seasonHtml, recapHtml] = await Promise.all([
-      fetchFSGSeasonPage(50),
-      fetchFSGRecapPage(50),
-    ]);
-
-    const seasonScores = parseSeasonScores(seasonHtml);
-    const episodeRecap = parseEpisodeRecap(recapHtml);
-    const allEpisodeScores = calculateEpisodeScores(episodeRecap);
-
-    // Filter to the requested episode
-    const thisEpScores = allEpisodeScores.filter(
-      (s) => s.episode === episode
-    );
-
-    if (seasonScores.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            'Failed to parse FSG data — 0 survivors found. The page format may have changed.',
-          debug: {
-            seasonHtmlLength: seasonHtml.length,
-            recapHtmlLength: recapHtml.length,
-          },
-        },
-        { status: 500 }
-      );
-    }
-
-    // Check if the requested episode exists in the recap
-    const epExists = episodeRecap.find((e) => e.episodeNumber === episode);
-    if (!epExists) {
+    const supabase = createServiceClient();
+    const loaded = await loadFSG(supabase, seasonId);
+    const ep = loaded.episodes.find(e => e.episode === episode);
+    if (!ep) {
       return NextResponse.json({
         success: false,
-        error: `Episode ${episode} not found in FSG recap. FSG may not have updated yet.`,
-        availableEpisodes: episodeRecap.map((e) => e.episodeNumber),
-      });
+        error: `Episode ${episode} isn't on FSG's recap page yet. FSG usually updates the morning after it airs.`,
+        availableEpisodes: loaded.episodes.map(e => e.episode),
+      }, { status: 404 });
     }
 
-    // ----------------------------------------------------------------
-    // 2. Get our survivors from DB for name → UUID mapping
-    // ----------------------------------------------------------------
-    const { data: dbSurvivors } = await supabase
-      .from('survivors')
-      .select(
-        'id, name, full_name, cast_id, is_active, eliminated_episode, elimination_order'
-      )
-      .eq('season_id', seasonId);
-
-    if (!dbSurvivors || dbSurvivors.length === 0) {
-      return NextResponse.json(
-        { error: 'No survivors found in database for this season' },
-        { status: 500 }
-      );
+    // ── Blocking problems: never write a partial or mis-mapped episode ──
+    const epFsgIds = new Set([...ep.events.map(e => e.fsgId), ...(ep.soleSurvivor ? [ep.soleSurvivor.fsgId] : [])]);
+    const unmapped = [...epFsgIds].filter(id => !loaded.byFsgId.has(id));
+    const blocking = [
+      ...ep.errors,
+      ...unmapped.map(id => `FSG survivor id ${id} has no matching survivors row (survivors.fsg_id). Nothing was written.`),
+    ];
+    if (blocking.length) {
+      return NextResponse.json({ success: false, error: 'FSG data could not be parsed safely. Nothing was written.', blocking }, { status: 422 });
     }
 
-    // Build name lookup: FSG name → DB survivor
-    // FSG episode recap uses first names like "Tiffany", "Coach", "Q"
-    const nameToSurvivor: Record<string, (typeof dbSurvivors)[0]> = {};
-    for (const s of dbSurvivors) {
-      nameToSurvivor[s.full_name] = s;
-      nameToSurvivor[s.name] = s;
-      // Handle quoted names: DB might have "Q" or Q
-      if (s.name.startsWith('"')) {
-        nameToSurvivor[s.name.replace(/"/g, '')] = s;
-      }
-      // Also add lowercase variants
-      nameToSurvivor[s.name.toLowerCase()] = s;
+    const warnings: string[] = [
+      ...ep.warnings,
+      ...summaryIssues(ep, loaded),
+      ...loaded.cumulativeIssues,
+      ...loaded.unmappedFsgIds.filter(id => !epFsgIds.has(id)).map(id => `FSG season page lists survivor id ${id}, which has no survivors row.`),
+    ];
+
+    const events = toEpisodeEvents(ep, loaded.byFsgId);
+    const outcomes = deriveOutcomes(events);
+    const idOf = (fsgId: number) => loaded.byFsgId.get(fsgId)!.id;
+    const nameOf = (id: string) => loaded.survivors.find(s => s.id === id)?.name ?? id;
+
+    // ── 1. episode_events (delete + insert = idempotent) ──
+    const { error: delErr } = await supabase.from('episode_events').delete().eq('season_id', seasonId).eq('episode', episode);
+    if (delErr) throw delErr;
+    if (events.length) {
+      const { error } = await supabase.from('episode_events').insert(events.map(e => ({
+        season_id: seasonId, episode, survivor_id: e.survivorId, action: e.action, points: e.points, category: e.category,
+      })));
+      if (error) throw error;
     }
 
-    // Helper to find a DB survivor from an FSG name
-    function findSurvivor(fsgName: string) {
-      const clean = fsgName.replace(/&quot;/g, '"').replace(/^"|"$/g, '');
-      return (
-        nameToSurvivor[fsgName] ||
-        nameToSurvivor[clean] ||
-        nameToSurvivor[clean.toLowerCase()] ||
-        nameToSurvivor[fsgName.toLowerCase()] ||
-        // Try partial match as last resort
-        dbSurvivors!.find(
-          (s) =>
-            s.name.toLowerCase() === clean.toLowerCase() ||
-            s.full_name.toLowerCase().includes(clean.toLowerCase())
-        )
-      );
+    // ── 2. episode_outcomes ──
+    {
+      const { error } = await supabase.from('episode_outcomes').upsert({
+        season_id: seasonId, episode,
+        reward_happened: outcomes.rewardHappened,
+        immunity_happened: outcomes.immunityHappened,
+        reward_winners: outcomes.rewardWinners,
+        immunity_winners: outcomes.immunityWinners,
+        departures: outcomes.departures,
+        mop_winners: outcomes.mopWinners,
+        computed_at: new Date().toISOString(),
+      }, { onConflict: 'season_id,episode' });
+      if (error) throw error;
     }
 
-    // ----------------------------------------------------------------
-    // 3. Build score rows from episode recap data
-    // ----------------------------------------------------------------
-    const scoreRows: any[] = [];
-    const warnings: string[] = [];
+    // ── 3. survivor_scores (continuity with S50 shape; manual adjustments kept) ──
+    const { data: existingScores } = await supabase.from('survivor_scores')
+      .select('survivor_id, manual_adjustment').eq('season_id', seasonId).eq('episode', episode);
+    const adjBy = new Map((existingScores || []).map((r: any) => [r.survivor_id, r.manual_adjustment || 0]));
+    const cumulativeBy = new Map(loaded.seasonRows.map(r => [r.fsgId, r.survPts]));
+    const pulledAt = new Date().toISOString();
 
-    // Build a map of episode scores: survivorName → score data
-    const epScoreMap: Record<
-      string,
-      { fsgPoints: number; scoredActions: any[] }
-    > = {};
-    for (const score of thisEpScores) {
-      epScoreMap[score.survivorName] = {
-        fsgPoints: score.fsgPoints,
-        scoredActions: score.scoredActions,
-      };
-    }
-
-    // Also get cumulative totals from the season page for the fsg_cumulative column
-    const cumulativeMap: Record<string, number> = {};
-    for (const ss of seasonScores) {
-      cumulativeMap[ss.firstName] = ss.survPts;
-    }
-
-    // Process every DB survivor (not just those who scored this episode)
-    // Survivors who didn't score get 0 points for the episode
-    for (const dbSurvivor of dbSurvivors) {
-      const epData = epScoreMap[dbSurvivor.name] ||
-        epScoreMap[`"${dbSurvivor.name}"`] ||
-        epScoreMap[`&quot;${dbSurvivor.name}&quot;`] ||
-        null;
-
-      const fsgPoints = epData?.fsgPoints ?? 0;
-      const cumulative =
-        cumulativeMap[dbSurvivor.name] ??
-        cumulativeMap[dbSurvivor.name.replace(/"/g, '')] ??
-        0;
-
-      scoreRows.push({
-        season_id: seasonId,
-        survivor_id: dbSurvivor.id,
-        episode,
+    const scoreRows = loaded.survivors.filter(s => s.is_playable && s.fsg_id).map(s => {
+      const mine = events.filter(e => e.survivorId === s.id && e.category !== 'departure');
+      const fsgPoints = mine.reduce((sum, e) => sum + e.points, 0);
+      const adj = adjBy.get(s.id) || 0;
+      return {
+        season_id: seasonId, survivor_id: s.id, episode,
         fsg_points: fsgPoints,
-        fsg_cumulative: cumulative,
-        manual_adjustment: 0,
-        final_points: fsgPoints,
-        scored_actions: epData
-          ? {
-              actions: epData.scoredActions,
-              source: 'fsg_auto',
-              pulled_at: new Date().toISOString(),
-            }
-          : { actions: [], source: 'fsg_auto', no_actions: true },
-      });
+        fsg_cumulative: cumulativeBy.get(s.fsg_id!) ?? null,
+        manual_adjustment: adj,
+        voted_out_bonus: 0,
+        final_points: fsgPoints + adj,
+        scored_actions: mine.length
+          ? { source: 'fsg_auto', actions: mine.map(e => ({ action: e.action, points: e.points })), pulled_at: pulledAt }
+          : { source: 'fsg_auto', actions: [], no_actions: true },
+      };
+    });
+    {
+      const { error } = await supabase.from('survivor_scores').upsert(scoreRows, { onConflict: 'season_id,survivor_id,episode' });
+      if (error) throw error;
     }
 
-    // Check for FSG names we couldn't match
-    for (const score of thisEpScores) {
-      const matched = findSurvivor(score.survivorName);
-      if (!matched) {
-        warnings.push(
-          `Could not match FSG name "${score.survivorName}" to database`
-        );
+    // ── 4. Eliminations (the Pool walk reads these) ──
+    const eliminations: { name: string; kind: string; place: number | null; eliminationOrder: number | null }[] = [];
+    const departedIds = new Set(ep.departures.map(d => idOf(d.fsgId)));
+
+    for (const d of ep.departures) {
+      const s = loaded.survivors.find(x => x.id === idOf(d.fsgId))!;
+      if (s.eliminated_episode !== null && s.eliminated_episode !== episode) {
+        warnings.push(`${s.name} is already marked out in episode ${s.eliminated_episode}; FSG now lists them leaving in episode ${episode}. Left unchanged — check manually.`);
+        continue;
+      }
+      const eliminationOrder = d.place !== null ? eliminationOrderFromPlace(d.place) : s.elimination_order;
+      const { error } = await supabase.from('survivors')
+        .update({ is_active: false, eliminated_episode: episode, elimination_order: eliminationOrder })
+        .eq('id', s.id);
+      if (error) throw error;
+      eliminations.push({ name: s.name, kind: d.kind, place: d.place, eliminationOrder });
+    }
+
+    // Anyone we previously marked out in THIS episode but FSG no longer lists → restore
+    for (const s of loaded.survivors) {
+      if (s.eliminated_episode === episode && !departedIds.has(s.id)) {
+        const { error } = await supabase.from('survivors')
+          .update({ is_active: true, eliminated_episode: null, elimination_order: null }).eq('id', s.id);
+        if (error) throw error;
+        warnings.push(`${s.name} was marked out in episode ${episode} but FSG no longer lists them — restored to active.`);
       }
     }
 
-    // ----------------------------------------------------------------
-    // 4. Preserve existing manual adjustments
-    // ----------------------------------------------------------------
-    const { data: existingScores } = await supabase
-      .from('survivor_scores')
-      .select('survivor_id, manual_adjustment')
-      .eq('season_id', seasonId)
-      .eq('episode', episode);
-
-    if (existingScores) {
-      const adjMap: Record<string, number> = {};
-      for (const es of existingScores) {
-        adjMap[es.survivor_id] = es.manual_adjustment || 0;
-      }
-      for (const row of scoreRows) {
-        const existingAdj = adjMap[row.survivor_id] || 0;
-        row.manual_adjustment = existingAdj;
-        row.final_points = row.fsg_points + existingAdj;
-      }
+    if (ep.soleSurvivor) {
+      const winner = loaded.survivors.find(x => x.id === idOf(ep.soleSurvivor!.fsgId))!;
+      const { error } = await supabase.from('survivors')
+        .update({ is_active: true, elimination_order: eliminationOrderFromPlace(ep.soleSurvivor.place ?? 1) })
+        .eq('id', winner.id);
+      if (error) throw error;
     }
 
-    // ----------------------------------------------------------------
-    // 5. Upsert scores
-    // ----------------------------------------------------------------
-    const { error: upsertError } = await supabase
-      .from('survivor_scores')
-      .upsert(scoreRows, { onConflict: 'season_id,survivor_id,episode' });
-
-    if (upsertError) {
-      return NextResponse.json(
-        { error: `Failed to save scores: ${upsertError.message}` },
-        { status: 500 }
-      );
-    }
-
-    // ----------------------------------------------------------------
-    // 6. Update elimination statuses from season page
-    // ----------------------------------------------------------------
-    const eliminationUpdates: any[] = [];
-
-    for (const fsg of seasonScores) {
-      if (fsg.place === null) continue; // Still in the game
-
-      const dbSurvivor = findSurvivor(fsg.firstName);
-      if (!dbSurvivor) continue;
-
-      // Only update if DB still thinks they're active
-      const wasAlreadyEliminated =
-        dbSurvivor.eliminated_episode !== null &&
-        dbSurvivor.eliminated_episode !== undefined;
-
-      if (!wasAlreadyEliminated) {
-        const eliminationOrder = 24 - fsg.place + 1;
-
-        await supabase
-          .from('survivors')
-          .update({
-            is_active: false,
-            eliminated_episode: episode,
-            elimination_order: eliminationOrder,
-          })
-          .eq('id', dbSurvivor.id);
-
-        eliminationUpdates.push({
-          name: dbSurvivor.name,
-          place: fsg.place,
-          bonus: eliminationOrder,
-        });
+    // ── 5. Tribe changes (swaps / merge). original_tribe is never touched. ──
+    const tribeChanges: string[] = [];
+    for (const row of loaded.seasonRows) {
+      const ref = loaded.byFsgId.get(row.fsgId);
+      const s = ref && loaded.survivors.find(x => x.id === ref.id);
+      if (!s || departedIds.has(s.id) || !s.is_active) continue;
+      if (['Out', 'Unknown', ''].includes(row.tribe) || row.tribe === s.tribe) continue;
+      if (!ALLOWED_TRIBES.includes(row.tribe)) {
+        warnings.push(`FSG shows ${s.name} on tribe "${row.tribe}", which the survivors_tribe_check constraint doesn't allow yet. Add it to the constraint, then pull again.`);
+        continue;
       }
+      const { error } = await supabase.from('survivors').update({ tribe: row.tribe }).eq('id', s.id);
+      if (error) throw error;
+      tribeChanges.push(`${s.name}: ${s.tribe} → ${row.tribe}`);
     }
 
-    // ----------------------------------------------------------------
-    // 7. Return results
-    // ----------------------------------------------------------------
-    // Only include survivors who actually scored for the response summary
-    const scoredSurvivors = scoreRows
-      .filter((s) => s.fsg_points > 0)
-      .map((s) => {
-        const surv = dbSurvivors.find((d) => d.id === s.survivor_id);
-        return {
-          name: surv?.name || 'Unknown',
-          episodePoints: s.fsg_points,
-          cumulative: s.fsg_cumulative,
-          finalPoints: s.final_points,
-          actions: s.scored_actions?.actions || [],
-        };
-      })
-      .sort((a, b) => b.episodePoints - a.episodePoints);
+    // ── 6. Episode status ──
+    await supabase.from('episodes').update({ status: 'aired' })
+      .eq('season_id', seasonId).eq('number', episode).eq('status', 'scheduled');
+
+    // ── 7. Log ──
+    await supabase.from('activity_log').insert({
+      season_id: seasonId, type: 'admin',
+      message: `FSG pulled for episode ${episode}: ${events.filter(e => e.category !== 'departure').length} actions, ${ep.departures.length} departure(s)${warnings.length ? `, ${warnings.length} warning(s)` : ''}`,
+      metadata: { episode, warnings, unknownActions: ep.unknownActions },
+    });
 
     return NextResponse.json({
       success: true,
       episode,
-      survivorsScored: scoreRows.length,
-      survivorsWithPoints: scoredSurvivors.length,
-      eliminations: eliminationUpdates,
-      scores: scoredSurvivors,
-      availableEpisodes: episodeRecap.map((e) => e.episodeNumber),
+      actions: events.filter(e => e.category !== 'departure').length,
+      outcomes: {
+        rewardHappened: outcomes.rewardHappened,
+        immunityHappened: outcomes.immunityHappened,
+        rewardWinners: outcomes.rewardWinners.map(nameOf),
+        immunityWinners: outcomes.immunityWinners.map(nameOf),
+        mopWinners: outcomes.mopWinners.map(nameOf),
+        mopPoints: Math.max(0, ...Object.values(outcomes.otherPoints)),
+      },
+      eliminations,
+      tribeChanges,
+      scores: scoreRows.filter(r => r.fsg_points !== 0)
+        .map(r => ({ name: nameOf(r.survivor_id), points: r.fsg_points, actions: (r.scored_actions as any).actions }))
+        .sort((a, b) => b.points - a.points),
+      unknownActions: ep.unknownActions,
       warnings,
+      availableEpisodes: loaded.episodes.map(e => e.episode),
     });
   } catch (error: any) {
     console.error('FSG scrape error:', error);
-    return NextResponse.json(
-      { error: `Scrape failed: ${error.message}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: `Scrape failed: ${error.message}` }, { status: 500 });
   }
 }

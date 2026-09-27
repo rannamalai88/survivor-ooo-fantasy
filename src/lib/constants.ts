@@ -4,6 +4,31 @@
 
 export const SEASON_ID = process.env.NEXT_PUBLIC_SEASON_ID || '550e8400-e29b-41d4-a716-446655440000';
 
+// ============================================================
+// S51 season shape (spec §2). Reference these — never inline 21 / 51.
+// ============================================================
+export const SEASON_NUMBER = 51;
+export const CAST_SIZE = 21;
+export const TRIBES = ['Savu', 'Toka'] as const;
+export const H2H_ROUNDS = 11;
+
+// FSG numbers places the opposite way to elimination_order
+// (FSG: 1 = winner; DB: 1 = first out).
+export const eliminationOrderFromPlace = (fsgPlace: number) => CAST_SIZE + 1 - fsgPlace;
+export const placeFromEliminationOrder = (eliminationOrder: number) => CAST_SIZE + 1 - eliminationOrder;
+
+// Quinfecta (E13): exact place +5, one place off +2, all five exact +10
+export const QUINFECTA_EXACT = 5;
+export const QUINFECTA_ADJACENT = 2;
+export const QUINFECTA_PERFECT_BONUS = 10;
+
+// Championship: rank each game, map rank to the curve, multiply by weight
+export const PLACEMENT_CURVE = [12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
+export const WEIGHTS = { fantasy: 3, pool: 1.5, quinfecta: 1 } as const;
+
+// H2H fixture points
+export const H2H_POINTS = { win: 3, draw: 1, loss: 0 } as const;
+
 // Tribe colors (S51 first; S50 tribes kept so last season's data still renders)
 export const TRIBE_COLORS: Record<string, string> = {
   Savu: '#8b2bc0',
