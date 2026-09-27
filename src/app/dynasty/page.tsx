@@ -70,12 +70,22 @@ export default function DynastyPage() {
   async function loadData() {
     try {
       setLoading(true);
-      const [managersRes, dynastyRes] = await Promise.all([
+      // dynasty_rankings.manager_id points at whichever season's managers row the
+      // view joins to (S50 ids today), while the league list is this season's
+      // rows. Managers are season-scoped, so match history on name instead.
+      const [managersRes, allManagersRes, dynastyRes] = await Promise.all([
         supabase.from('managers').select('id, name').eq('season_id', SEASON_ID).order('name'),
+        supabase.from('managers').select('id, name'),
         supabase.from('dynasty_rankings').select('manager_id, season_label, rank').order('season_label'),
       ]);
-      setManagers(managersRes.data || []);
-      setDynastyData(dynastyRes.data || []);
+      const current = managersRes.data || [];
+      const nameById = new Map((allManagersRes.data || []).map((m: any) => [m.id, m.name]));
+      const currentIdByName = new Map(current.map((m: any) => [m.name, m.id]));
+      setManagers(current);
+      setDynastyData((dynastyRes.data || []).map((d: any) => ({
+        ...d,
+        manager_id: currentIdByName.get(nameById.get(d.manager_id)) ?? d.manager_id,
+      })));
     } catch (err) {
       console.error('Failed to load dynasty:', err);
     } finally {
@@ -316,7 +326,7 @@ export default function DynastyPage() {
       </div>
 
       <div className="mt-3 text-[10px] text-white/20">
-        Rankings based on final individual standings each season. Lower is better. Hover over names to highlight. S50 will update when the season concludes.
+        Rankings based on final individual standings each season. Lower is better. Hover over names to highlight. The current season is added when it concludes.
       </div>
     </div>
   );
