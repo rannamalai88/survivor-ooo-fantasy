@@ -1,15 +1,14 @@
 'use client';
 
-const Flame = () => (
-  <svg width="14" height="18" viewBox="0 0 14 18" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
-    <path d="M7 0C7 0 14 6 14 11C14 14.866 10.866 18 7 18C3.134 18 0 14.866 0 11C0 6 7 0 7 0Z" fill="url(#fgRL)" />
-    <path d="M7 8C7 8 10.5 11 10.5 13.5C10.5 15.433 8.933 17 7 17C5.067 17 3.5 15.433 3.5 13.5C3.5 11 7 8 7 8Z" fill="url(#fiRL)" />
-    <defs>
-      <linearGradient id="fgRL" x1="7" y1="0" x2="7" y2="18"><stop stopColor="#FF6B35" /><stop offset="1" stopColor="#D32F2F" /></linearGradient>
-      <linearGradient id="fiRL" x1="7" y1="8" x2="7" y2="17"><stop stopColor="#FFD54F" /><stop offset="1" stopColor="#FF8F00" /></linearGradient>
-    </defs>
-  </svg>
-);
+// League rules for S51. Every number here comes from src/lib/constants.ts,
+// so the rules page and the scoring engine can't drift apart.
+
+import { useSeason } from '@/hooks/useSeason';
+import {
+  ROSTER_SLOTS, PICK_CHIPS, PENALTY, SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, H2H_POINTS,
+  PLACEMENT_CURVE, WEIGHTS, QUINFECTA_EXACT, QUINFECTA_ADJACENT, QUINFECTA_PERFECT_BONUS,
+  CHIP_FIRST_EP, CHIP_LAST_EP, CAST_SIZE, H2H_ROUNDS,
+} from '@/lib/constants';
 
 const Section = ({ id, icon, title, children, color = 'rgba(255,255,255,0.06)' }: {
   id: string; icon: string; title: string; children: React.ReactNode; color?: string;
@@ -19,7 +18,7 @@ const Section = ({ id, icon, title, children, color = 'rgba(255,255,255,0.06)' }
       <span style={{ fontSize: '24px' }}>{icon}</span>
       <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#fff' }}>{title}</h2>
     </div>
-    <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)', lineHeight: 1.7 }}>{children}</div>
+    <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.6)', lineHeight: 1.7 }}>{children}</div>
   </div>
 );
 
@@ -30,298 +29,136 @@ const Rule = ({ children }: { children: React.ReactNode }) => (
   </div>
 );
 
-const ScoreRow = ({ action, pts, color = '#FF6B35' }: { action: string; pts: number | string; color?: string }) => (
-  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 10px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)' }}>{action}</span>
-    <span style={{ fontSize: '12px', fontWeight: 700, color, minWidth: '30px', textAlign: 'right' }}>
-      {typeof pts === 'number' ? (pts > 0 ? `+${pts}` : pts) : pts}
-    </span>
+const Row = ({ left, right, color = '#FF6B35' }: { left: React.ReactNode; right: React.ReactNode; color?: string }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', padding: '6px 10px', borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+    <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>{left}</span>
+    <span style={{ fontSize: '12px', fontWeight: 700, color, textAlign: 'right' }}>{right}</span>
   </div>
 );
 
-const TOC_ITEMS = [
+const Box = ({ children }: { children: React.ReactNode }) => (
+  <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', overflow: 'hidden', margin: '8px 0' }}>{children}</div>
+);
+
+const b = (t: React.ReactNode) => <b style={{ color: 'rgba(255,255,255,0.85)' }}>{t}</b>;
+
+const TOC = [
   { id: 'overview', icon: '🔥', label: 'Overview' },
-  { id: 'fantasy', icon: '🏝️', label: 'Fantasy' },
-  { id: 'draft', icon: '📋', label: 'Draft' },
-  { id: 'captain', icon: '👑', label: 'Captain' },
+  { id: 'card', icon: '🃏', label: 'Pick Card' },
   { id: 'chips', icon: '🎰', label: 'Chips' },
+  { id: 'h2h', icon: '⚔️', label: 'Head to Head' },
   { id: 'pool', icon: '🌊', label: 'Pool' },
   { id: 'quinfecta', icon: '🎯', label: 'Quinfecta' },
-  { id: 'net', icon: '💬', label: 'NET' },
-  { id: 'scoring', icon: '📊', label: 'Scoring' },
-  { id: 'prizes', icon: '💰', label: 'Prizes' },
+  { id: 'championship', icon: '🏆', label: 'Championship' },
 ];
 
 export default function RulesPage() {
+  const { season } = useSeason();
+  const slot = (k: string) => ROSTER_SLOTS.find(s => s.key === k)!;
+
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8e8', fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-
-      <div style={{ padding: '20px', maxWidth: '720px', margin: '0 auto' }}>
-        {/* Hero */}
-        <div style={{
-          textAlign: 'center', padding: '28px 20px', marginBottom: '18px',
-          background: 'linear-gradient(135deg, rgba(255,107,53,0.06), rgba(255,107,53,0.02))',
-          border: '1px solid rgba(255,107,53,0.12)', borderRadius: '16px',
-        }}>
-          <h1 style={{ margin: 0, fontSize: '26px', fontWeight: 800, background: 'linear-gradient(135deg, #FF6B35, #FFD54F)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-            League Rules
-          </h1>
-          <p style={{ margin: '6px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.35)' }}>
-            Survivor OOO Fantasy · Season 50 · Commissioner: Ramu
-          </p>
+      <div style={{ padding: '20px 16px', maxWidth: '720px', margin: '0 auto' }}>
+        <div style={{ textAlign: 'center', padding: '28px 20px', marginBottom: '18px', background: 'linear-gradient(135deg, rgba(255,107,53,0.06), rgba(255,107,53,0.02))', border: '1px solid rgba(255,107,53,0.12)', borderRadius: '16px' }}>
+          <h1 style={{ margin: 0, fontSize: '26px', fontWeight: 800, background: 'linear-gradient(135deg, #FF6B35, #FFD54F)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>League Rules</h1>
+          <p style={{ margin: '6px 0 0', fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>Survivor OOO Fantasy · {season?.name ?? ''} · Commissioner: Ramu</p>
         </div>
 
-        {/* Quick Nav */}
-        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '18px' }}>
-          {TOC_ITEMS.map((t) => (
-            <a key={t.id} href={`#${t.id}`} style={{
-              padding: '5px 10px', background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px',
-              fontSize: '10px', fontWeight: 600, color: 'rgba(255,255,255,0.35)',
-              textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px',
-            }}>
-              {t.icon} {t.label}
-            </a>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '18px', justifyContent: 'center' }}>
+          {TOC.map(t => (
+            <a key={t.id} href={`#${t.id}`} style={{ fontSize: '11px', fontWeight: 700, padding: '5px 10px', borderRadius: '8px', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>{t.icon} {t.label}</a>
           ))}
         </div>
 
-        {/* Overview */}
         <Section id="overview" icon="🔥" title="Overview">
-          <p style={{ margin: 0 }}>
-            A private <b style={{ color: '#FF6B35' }}>12-manager</b> Survivor Fantasy League combining four mini-games into one overall competition.
-            Compete individually and as couples (6 pairs) for <b style={{ color: '#FFD54F' }}>$240 in prizes</b>.
-          </p>
-          <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-            {[
-              { i: '🏝️', n: 'Fantasy', d: 'Draft a team, earn points from the show' },
-              { i: '🌊', n: 'Pool', d: 'Pick one survivor each week to stay alive' },
-              { i: '🎯', n: 'Quinfecta', d: 'Predict the final 5 finish order' },
-              { i: '💬', n: 'NET', d: 'Guess who says the episode title' },
-            ].map((g) => (
-              <div key={g.n} style={{ padding: '10px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                <span style={{ fontSize: '14px' }}>{g.i}</span>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginTop: '2px' }}>{g.n}</div>
-                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{g.d}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop: '12px', fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>
-            <b style={{ color: 'rgba(255,255,255,0.5)' }}>All picks due: Wednesday 7:00 PM CT</b> (before episode airs)
-          </div>
+          <Rule>No draft, no rosters, no captains. {b('Every week resets.')} Each week you fill a 5-slot pick card from the {CAST_SIZE} castaways still in the game.</Rule>
+          <Rule>Your card total decides your {b('Head-to-Head')} fixture against one other manager that week.</Rule>
+          <Rule>The {b('Survivor Pool')} and {b('Quinfecta')} run alongside, and all three feed the {b('Championship')}.</Rule>
+          <Rule>Picks lock {b('Wednesday 7:00pm CT')} each episode. After that your card is read-only and everyone&apos;s cards appear on Reveals.</Rule>
+          <Rule>Scores come from FantasySurvivorGame.com&apos;s episode recap. Every point you earn is itemized on your score breakdown.</Rule>
         </Section>
 
-        {/* Fantasy Scoring */}
-        <Section id="fantasy" icon="🏝️" title="Game A — Survivor Fantasy" color="rgba(255,107,53,0.15)">
-          <p style={{ margin: '0 0 12px' }}>
-            Draft a team of 5 survivors who earn points based on in-game performance.
-            Scoring pulled from <b style={{ color: 'rgba(255,255,255,0.6)' }}>FantasySurvivorGame.com</b>.
-          </p>
-          <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '1px', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase' as const, marginBottom: '4px' }}>
-            Scoring Categories
-          </div>
-          <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)', overflow: 'hidden', marginBottom: '12px' }}>
-            {([
-              ['Win Tribe Immunity', 3], ['Win Tribe Reward', 2], ['Win Individual Immunity', 2],
-              ['Win Fire Making', 2], ['Read Tree Mail', 2], ['Make Fire at Camp', 2],
-              ['Play Idol/Advantage', 2], ['Play Shot in the Dark', 2], ['Merge', 2],
-              ['Win Marooning/Supply', 1], ['Win Individual Reward', 1], ['Win Journey Challenge', 1],
-              ['Strategize at Water Well', 1], ['Find Food / Go on Journey', 1],
-              ['Find Clue / Gain Idol / Gain Advantage', 1],
-            ] as [string, number][]).map(([a, p]) => (
-              <ScoreRow key={a} action={a} pts={p} />
-            ))}
-          </div>
-          <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '1px', color: 'rgba(255,255,255,0.25)', textTransform: 'uppercase' as const, marginBottom: '4px' }}>
-            Custom League Scoring
-          </div>
-          <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)', overflow: 'hidden' }}>
-            <ScoreRow action="Voted Out bonus (1pt per elimination position)" pts="varies" color="#1ABC9C" />
-            <ScoreRow action="Sole Survivor bonus" pts={15} color="#FFD700" />
-            <ScoreRow action="Idol in pocket penalty" pts={-5} color="#E74C3C" />
-          </div>
-          <div style={{ marginTop: '6px', fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>
-            ❌ FSG Outwit (vote) pts, Bonus pts, and &quot;Out of Game&quot; pts are NOT used
-          </div>
+        <Section id="card" icon="🃏" title="The Pick Card" color="rgba(255,107,53,0.15)">
+          <p style={{ margin: '0 0 8px' }}>Four roster slots plus Title. The four roster picks must be {b('four different survivors')}.</p>
+          <Box>
+            {ROSTER_SLOTS.map(s => <Row key={s.key} left={<>{s.icon} {b(s.label)} — {s.desc}</>} right="" />)}
+            <Row left={<>💬 {b('Title')} — who says the line that becomes the episode title. Anyone still in the game, or Jeff. Can repeat a roster pick.</>} right={`+${SLOT_BONUS_TITLE}`} />
+          </Box>
+
+          <p style={{ margin: '14px 0 6px' }}>{b('How a roster slot scores')}</p>
+          <Box>
+            <Row left="Your survivor's FSG points for the episode" right="base" color="rgba(255,255,255,0.8)" />
+            <Row left="Slot hits (the survivor did the thing the slot asks for)" right="base × 2" color="#4ade80" />
+            <Row left={`${slot('going_home').label} hits`} right={`base × 2, +${SLOT_BONUS_GOING_HOME}`} color="#4ade80" />
+            <Row left="Slot misses" right="base only" color="rgba(255,255,255,0.8)" />
+          </Box>
+
+          <p style={{ margin: '14px 0 6px' }}>{b('Penalties')} — if a survivor in a non-Going-Home slot leaves the game:</p>
+          <Box>
+            <Row left={slot('immunity').label} right={PENALTY.immunity} color="#f87171" />
+            <Row left={slot('reward').label} right={PENALTY.reward} color="#f87171" />
+            <Row left={slot('mop').label} right={PENALTY.mop} color="#f87171" />
+          </Box>
+          <Rule>Penalties are uncapped — a multi-boot week can stack them. {b('Card totals can be negative.')}</Rule>
+          <Rule>{b('No-event rule:')} if there was no reward challenge, the Reward slot scores base points only — no double, no penalty. The same goes for Immunity with no immunity challenge, and MOP if nobody scored Other points.</Rule>
+          <Rule>{b('Most Other Points')} counts every FSG action that isn&apos;t a reward or immunity challenge win (e.g. tree mail, finding an idol). Ties pay everyone tied.</Rule>
+          <Rule>{b('Going Home')} pays if your pick leaves for any reason — voted out, quit, or medically evacuated.</Rule>
+          <Rule>Commissioner adjustments are added to a slot and are never multiplied.</Rule>
+          <Rule>No card submitted = 0 for the week (you still play your fixture).</Rule>
         </Section>
 
-        {/* Draft */}
-        <Section id="draft" icon="📋" title="The Draft" color="rgba(26,188,156,0.15)">
-          <p style={{ margin: '0 0 12px' }}>
-            12 managers draft 5 survivors each from a cast of 24 (minus eliminated). Live over Teams — Commissioner enters picks.
-          </p>
-          {[
-            { r: 'Round 1 — Free Pick', o: 'Order: 1 → 12', d: 'No restrictions. Duplicates allowed. Does NOT count toward retirement.' },
-            { r: 'Rounds 2–4 — Snake', o: 'R2: 1→12 · R3: 12→1 · R4: 1→12', d: 'Once a survivor is drafted twice across R2–4, they\'re retired from the board. R1 picks don\'t count toward this limit.' },
-            { r: 'Round 5 — Partner Pick', o: 'R5: 1→12', d: 'Your partner picks a survivor FOR you. Eligible pool: survivors picked in Round 4 OR not yet retired (<2 picks in R2–4). Can\'t pick someone already on the receiving partner\'s team. Max 2 picks per survivor in R5. Retirement cap does not apply — a survivor at 2 picks from R2–4 can still be chosen.' },
-          ].map((r) => (
-            <div key={r.r} style={{ padding: '10px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)', marginBottom: '6px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: '#1ABC9C' }}>{r.r}</div>
-              <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', marginTop: '2px' }}>{r.o}</div>
-              <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '4px' }}>{r.d}</div>
-            </div>
-          ))}
-
-          {/* Partner Pairings */}
-          <div style={{ marginTop: '8px', padding: '10px', background: 'rgba(155,89,182,0.05)', borderRadius: '8px', border: '1px solid rgba(155,89,182,0.1)' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: '#9B59B6', letterSpacing: '1px', marginBottom: '6px' }}>R5 PARTNER PAIRINGS</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '4px' }}>
-              {[
-                ['Alli ↔ Samin'], ['Alan ↔ Gisele'], ['Hari ↔ Michael'],
-                ['Stephanie ↔ Amy'], ['Alec ↔ Ramu'], ['Veena ↔ Cassie'],
-              ].map(([pair]) => (
-                <div key={pair} style={{ padding: '4px 8px', background: 'rgba(155,89,182,0.08)', borderRadius: '4px', fontSize: '11px', color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
-                  {pair}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ marginTop: '8px', padding: '8px 10px', background: 'rgba(255,107,53,0.05)', borderRadius: '6px', fontSize: '12px', color: 'rgba(255,255,255,0.4)' }}>
-            <b style={{ color: '#FF6B35' }}>Draft Order:</b> 1. Alli, 2. Alan, 3. Hari, 4. Stephanie, 5. Alec, 6. Veena, 7. Ramu, 8. Cassie, 9. Amy, 10. Michael, 11. Gisele, 12. Samin
-          </div>
+        <Section id="chips" icon="🎰" title="Chips" color="rgba(5,169,230,0.2)">
+          <p style={{ margin: '0 0 8px' }}>Four chips, each usable {b('once per season')}, {b('one per episode')}, in episodes {CHIP_FIRST_EP}–{CHIP_LAST_EP} only. Optional.</p>
+          <Box>{PICK_CHIPS.map(c => <Row key={c.id} left={<>{c.icon} {b(c.name)} — {c.desc}</>} right="" />)}</Box>
+          <Rule>Triple Down and Hedge target one of your four roster slots. A Hedge backup has to be someone not already on your card.</Rule>
+          <Rule>Order: Hedge resolves first, then slot scoring and Triple Down, then your fixture, then Double Fixture / Point Shield.</Rule>
         </Section>
 
-        {/* Captain */}
-        <Section id="captain" icon="👑" title="Captain System" color="rgba(255,215,0,0.12)">
-          <Rule>Designate one survivor as <b style={{ color: '#FFD54F' }}>Captain</b> each week — their points are <b style={{ color: '#FFD54F' }}>doubled (2x)</b></Rule>
-          <Rule>Captain does NOT get 2x on the +15 Sole Survivor bonus</Rule>
-          <Rule>Due <b style={{ color: '#FF6B35' }}>Wednesday 7pm CT</b> — can change weekly</Rule>
+        <Section id="h2h" icon="⚔️" title="Head to Head" color="rgba(248,113,113,0.15)">
+          <Rule>{H2H_ROUNDS} rounds — everyone plays everyone once, episodes 2–12. Higher card total wins.</Rule>
+          <Rule>Win {b(H2H_POINTS.win)} · Draw {b(H2H_POINTS.draw)} · Loss {b(H2H_POINTS.loss)}. Ties in the table are broken by total card points.</Rule>
+          <Rule>💞 {b('Couples Week')} — you play your partner. ⚔️ {b('Rivalry Week')} closes out the fixtures.</Rule>
+          <Rule>Shadow record: each week you also see how many of the other managers you outscored.</Rule>
         </Section>
 
-        {/* Chips */}
-        <Section id="chips" icon="🎰" title="Game Chips" color="rgba(255,215,0,0.12)">
-          <p style={{ margin: '0 0 12px' }}>5 one-time-use power-ups, each playable only during its window:</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px' }}>
-            {[
-              { i: '🤝', n: 'Assistant Manager', w: 'W3–4', e: "Copy another manager's team points (excl. bonuses) in addition to yours" },
-              { i: '⚡', n: 'Team Boost', w: 'W5–6', e: 'Core team (non-Captain) points tripled (3x)' },
-              { i: '👑', n: 'Super Captain', w: 'W7–8', e: 'Captain points quadrupled (4x) instead of doubled' },
-              { i: '🔄', n: 'Swap Out', w: 'W9–10', e: 'Swap active survivors on your team for any others' },
-              { i: '➕', n: 'Player Add', w: 'W11–12', e: 'Add any active survivor to your team' },
-            ].map((c) => (
-              <div key={c.n} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                <span style={{ fontSize: '20px' }}>{c.i}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#fff' }}>{c.n}</span>
-                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#FFD54F' }}>{c.w}</span>
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' }}>{c.e}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <Rule>One chip per week max · each used once per season · due Wed 7pm CT</Rule>
-        </Section>
-
-        {/* Pool */}
-        <Section id="pool" icon="🌊" title="Game B — Survivor Pool" color="rgba(26,188,156,0.15)">
-          <p style={{ margin: '0 0 10px' }}>Classic elimination pool — pick one survivor each week who you think will NOT be eliminated.</p>
+        <Section id="pool" icon="🌊" title="Survivor Pool" color="rgba(26,188,156,0.15)">
+          <p style={{ margin: '0 0 10px' }}>Classic elimination pool — pick one survivor each week who you think will NOT be eliminated. Unchanged from last season.</p>
           <Rule>Pick survives → you stay <b style={{ color: '#1ABC9C' }}>Active</b></Rule>
           <Rule>Pick voted out → you&apos;re <b style={{ color: '#E74C3C' }}>Drowned</b></Rule>
           <Rule>Each survivor can only be picked once per manager per season</Rule>
           <Rule>No pick submitted = auto-eliminated · No valid picks left = <b style={{ color: '#95a5a6' }}>Burnt</b></Rule>
-
           <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(231,76,60,0.05)', borderRadius: '8px', border: '1px solid rgba(231,76,60,0.1)' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#E74C3C' }}>🚪 Backdoor</div>
-            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '4px', lineHeight: 1.5 }}>
-              Once Drowned, guess who WILL be eliminated next. Correct = back in. Wrong = try again. Can Backdoor again if Drowned twice.
-            </div>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginTop: '4px', lineHeight: 1.5 }}>Once Drowned, guess who WILL be eliminated next. Correct = back in. Wrong = try again. Can Backdoor again if Drowned twice.</div>
           </div>
           <div style={{ marginTop: '8px', padding: '10px', background: 'rgba(255,215,0,0.04)', borderRadius: '8px', border: '1px solid rgba(255,215,0,0.1)' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#FFD54F' }}>🛡️ Immunity Idol</div>
-            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginTop: '4px' }}>
-              Previous season&apos;s Fantasy winner gets one-time auto-protection if their pool pick is eliminated.
-            </div>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginTop: '4px' }}>Previous season&apos;s champion gets one-time auto-protection if their pool pick is eliminated.</div>
           </div>
-          <div style={{ marginTop: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.35)' }}>
-            <b style={{ color: 'rgba(255,255,255,0.5)' }}>Scoring:</b> (Weeks Survived / Total Weeks) × (25% of Top Fantasy Score)
-          </div>
+          <Rule>Pool standing = weeks survived, which feeds the Championship (below).</Rule>
         </Section>
 
-        {/* Quinfecta */}
-        <Section id="quinfecta" icon="🎯" title="Game C — Quinfecta" color="rgba(230,126,34,0.15)">
-          <p style={{ margin: '0 0 10px' }}>
-            Before the finale, predict the exact finish order of the final 5 survivors.{' '}
-            <b style={{ color: 'rgba(255,255,255,0.5)' }}>Sequential scoring — NOT cumulative:</b>
-          </p>
-          <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)', overflow: 'hidden' }}>
-            <ScoreRow action="20th place correct" pts={5} color="#1ABC9C" />
-            <ScoreRow action="21st place correct" pts={10} color="#1ABC9C" />
-            <ScoreRow action="22nd place correct" pts={25} color="#FFD54F" />
-            <ScoreRow action="23rd place correct" pts={50} color="#FFD700" />
-            <ScoreRow action="24th (Sole Survivor) correct" pts={50} color="#FFD700" />
-          </div>
-          <div style={{ marginTop: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.35)', lineHeight: 1.6 }}>
-            Must get each stage correct <b style={{ color: 'rgba(255,255,255,0.5)' }}>sequentially</b>. Miss one and you only earn the highest tier reached.
-            Example: correct on 20th, 21st, 22nd but miss 23rd = <b style={{ color: '#FFD54F' }}>25 points</b> (not 5+10+25).
-            Max possible: <b style={{ color: '#FFD700' }}>50 points</b>.
-          </div>
+        <Section id="quinfecta" icon="🎯" title="Quinfecta" color="rgba(230,126,34,0.15)">
+          <p style={{ margin: '0 0 8px' }}>Before the finale, predict the finishing order of the final five (1st = Sole Survivor).</p>
+          <Box>
+            <Row left="Exact place" right={`+${QUINFECTA_EXACT}`} />
+            <Row left="One place off" right={`+${QUINFECTA_ADJACENT}`} />
+            <Row left="All five exact" right={`+${QUINFECTA_PERFECT_BONUS} bonus`} />
+          </Box>
+          <Rule>Each place is scored on its own — no sequential tiers. Max {QUINFECTA_EXACT * 5 + QUINFECTA_PERFECT_BONUS}.</Rule>
         </Section>
 
-        {/* NET */}
-        <Section id="net" icon="💬" title="Game D — NET (Next Episode Title)" color="rgba(155,89,182,0.15)">
-          <Rule>Each week, guess which survivor says the quote that becomes the episode title</Rule>
-          <Rule>Correct = <b style={{ color: '#FFD54F' }}>+3 points</b> · Incorrect = 0 points</Rule>
-          <Rule>Due <b style={{ color: '#FF6B35' }}>Wednesday 7pm CT</b> with other picks</Rule>
+        <Section id="championship" icon="🏆" title="Championship" color="rgba(255,215,0,0.15)">
+          <p style={{ margin: '0 0 8px' }}>Each game is ranked on its own. Your place earns curve points, multiplied by that game&apos;s weight:</p>
+          <Box>
+            <Row left="Place 1st → 12th" right={PLACEMENT_CURVE.join(' · ')} color="rgba(255,255,255,0.85)" />
+            <Row left="Fantasy (Head-to-Head points, tiebreak card points)" right={`× ${WEIGHTS.fantasy}`} />
+            <Row left="Pool (weeks survived)" right={`× ${WEIGHTS.pool}`} />
+            <Row left="Quinfecta" right={`× ${WEIGHTS.quinfecta}`} />
+          </Box>
+          <Rule>Max {PLACEMENT_CURVE[0] * (WEIGHTS.fantasy + WEIGHTS.pool + WEIGHTS.quinfecta)} points. Tied managers split the points for the places they share.</Rule>
+          <Rule>{b('Couples')} standings add both partners&apos; championship points.</Rule>
         </Section>
-
-        {/* Overall Scoring */}
-        <Section id="scoring" icon="📊" title="Overall Scoring">
-          <div style={{
-            padding: '14px', background: 'rgba(255,107,53,0.06)', borderRadius: '10px',
-            border: '1px solid rgba(255,107,53,0.15)', textAlign: 'center', marginBottom: '12px',
-          }}>
-            <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '2px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase' as const }}>
-              Total Score Formula
-            </div>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: '#fff', marginTop: '6px' }}>
-              <span style={{ color: '#FF6B35' }}>Fantasy</span> + <span style={{ color: '#1ABC9C' }}>Pool</span> + <span style={{ color: '#E67E22' }}>Quinfecta</span> + <span style={{ color: '#9B59B6' }}>NET</span>
-            </div>
-          </div>
-          <Rule><b style={{ color: '#FF6B35' }}>Fantasy:</b> Team points with captain 2x, chip effects, voted out bonus, sole survivor bonus</Rule>
-          <Rule><b style={{ color: '#1ABC9C' }}>Pool:</b> (Weeks Survived / Total Weeks) × (25% of Top Fantasy Score)</Rule>
-          <Rule><b style={{ color: '#E67E22' }}>Quinfecta:</b> 0–50 points from finale predictions</Rule>
-          <Rule><b style={{ color: '#9B59B6' }}>NET:</b> 3 points per correct episode title guess</Rule>
-          <div style={{ marginTop: '8px', fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>
-            <b>Tiebreaker:</b> Manager with the highest-placing draft pick wins.
-          </div>
-        </Section>
-
-        {/* Prizes */}
-        <Section id="prizes" icon="💰" title="Prizes">
-          <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', marginBottom: '12px' }}>
-            Entry: $20/person → <b style={{ color: '#FFD54F' }}>$240 total pot</b>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '8px' }}>
-            {[
-              { l: '1st Place', p: '60%', a: '$144', c: '#FFD700' },
-              { l: '2nd Place', p: '20%', a: '$48', c: '#C0C0C0' },
-              { l: '3rd Place', p: '10%', a: '$24', c: '#CD7F32' },
-              { l: 'Top Couple', p: '10%', a: '$24', c: '#E67E22' },
-            ].map((p) => (
-              <div key={p.l} style={{ textAlign: 'center', padding: '12px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.04)' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: p.c }}>{p.a}</div>
-                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{p.l} ({p.p})</div>
-              </div>
-            ))}
-          </div>
-        </Section>
-
-        {/* Couples */}
-        <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '16px', marginBottom: '14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-            <span style={{ fontSize: '18px' }}>💑</span>
-            <h3 style={{ margin: 0, fontSize: '14px', fontWeight: 700, color: '#fff' }}>Couples (S50)</h3>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '6px' }}>
-            {[['Alli', 'Alec'], ['Stephanie', 'Alan'], ['Amy', 'Hari'], ['Veena', 'Ramu'], ['Cassie', 'Michael'], ['Gisele', 'Samin']].map(([a, b]) => (
-              <div key={a} style={{ padding: '8px 10px', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.04)', textAlign: 'center' }}>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.5)' }}>{a} & {b}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );

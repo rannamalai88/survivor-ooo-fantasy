@@ -19,27 +19,6 @@ export function formatRank(rank: number): string {
   return `${rank}${suffix}`;
 }
 
-// Snake draft order helper
-// Rounds 1, 2, 4: positions 1→12
-// Round 3: positions 12→1
-// Round 5: partner pick (order 1→12 but partner picks for you)
-export function getDraftOrder(round: number, totalManagers: number = 12): number[] {
-  const forward = Array.from({ length: totalManagers }, (_, i) => i + 1);
-  const reverse = [...forward].reverse();
-
-  switch (round) {
-    case 1:
-    case 2:
-    case 4:
-    case 5:
-      return forward;
-    case 3:
-      return reverse;
-    default:
-      return forward;
-  }
-}
-
 // Calculate retirement count for a survivor in rounds 2-4
 export function getRetirementCount(
   survivorId: string,

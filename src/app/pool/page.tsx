@@ -3,23 +3,14 @@
 import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { SEASON_ID, TRIBE_COLORS } from '@/lib/constants';
+import { useSeason } from '@/hooks/useSeason';
 
 interface Manager { id: string; name: string; draft_position: number; }
 interface PoolStatusRow { manager_id: string; status: string; weeks_survived: number; has_immunity_idol: boolean; drowned_episode: number | null; }
 interface WeeklyPickRow { manager_id: string; episode: number; pool_pick_id: string | null; pool_backdoor_id: string | null; }
-interface ManagerTotalRow { manager_id: string; pool_score: number; }
+interface ManagerTotalRow { manager_id: string; champ_pool: number; }
 interface SurvivorInfo { id: string; name: string; tribe: string; is_active: boolean; eliminated_episode: number | null; }
 
-// Picks lock at Wed 7pm CT (= Thu 00:00 UTC) and stay locked until the
-// following Tue 7pm CT (= Wed 00:00 UTC during CDT). "Locked" = any UTC
-// day that is NOT Wednesday; Wednesday UTC is the picks-open window.
-//
-// Previously the function only returned true when ctNow itself was Wed
-// after 7pm, which incorrectly flipped back to "not locked" on Thursday,
-// hiding the just-locked episode all week.
-function isPicksLocked(): boolean {
-  return new Date().getUTCDay() !== 3;
-}
 
 export default function PoolBoardPage() {
   const [loading, setLoading] = useState(true);
@@ -31,13 +22,20 @@ export default function PoolBoardPage() {
   const [totalEpisodes, setTotalEpisodes] = useState(13);
   const [picksLocked, setPicksLocked] = useState(false);
   const [managerTotals, setManagerTotals] = useState<ManagerTotalRow[]>([]);
+  const [lockAt, setLockAt] = useState<number | null>(null);
+  const { season } = useSeason();
 
   useEffect(() => {
     loadData();
-    setPicksLocked(isPicksLocked());
-    const iv = setInterval(() => setPicksLocked(isPicksLocked()), 60_000);
-    return () => clearInterval(iv);
   }, []);
+
+  // The current episode's pool picks stay hidden until that episode locks (episodes.lock_at).
+  useEffect(() => {
+    const tick = () => setPicksLocked(lockAt !== null && Date.now() >= lockAt);
+    tick();
+    const iv = setInterval(tick, 30_000);
+    return () => clearInterval(iv);
+  }, [lockAt]);
 
   async function loadData() {
     try {
@@ -47,9 +45,12 @@ export default function PoolBoardPage() {
         supabase.from('managers').select('id, name, draft_position').eq('season_id', SEASON_ID).order('draft_position'),
         supabase.from('pool_status').select('*').eq('season_id', SEASON_ID),
         supabase.from('weekly_picks').select('manager_id, episode, pool_pick_id, pool_backdoor_id').eq('season_id', SEASON_ID).order('episode'),
-        supabase.from('survivors').select('id, name, tribe, is_active, eliminated_episode').eq('season_id', SEASON_ID),
-        supabase.from('manager_totals').select('manager_id, pool_score').eq('season_id', SEASON_ID),
+        supabase.from('survivors').select('id, name, tribe, is_active, eliminated_episode').eq('season_id', SEASON_ID).eq('is_playable', true),
+        supabase.from('manager_totals').select('manager_id, champ_pool').eq('season_id', SEASON_ID),
       ]);
+      const ep = seasonRes.data?.current_episode || 2;
+      const { data: epRow } = await supabase.from('episodes').select('lock_at').eq('season_id', SEASON_ID).eq('number', ep).maybeSingle();
+      setLockAt(epRow?.lock_at ? new Date(epRow.lock_at).getTime() : null);
       setCurrentEpisode(seasonRes.data?.current_episode || 2);
       setTotalEpisodes(seasonRes.data?.total_episodes || 13);
       setManagers(managersRes.data || []);
@@ -164,11 +165,11 @@ export default function PoolBoardPage() {
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <div>
           <h1 className="text-xl font-extrabold text-white tracking-wider">🌊 Survivor Pool Board</h1>
-          <p className="text-white/25 text-xs mt-1">Season 50 · Through Episode {currentEpisode - 1}</p>
+          <p className="text-white/25 text-xs mt-1">{season?.name ?? ''} · Through Episode {currentEpisode - 1}</p>
         </div>
         {!picksLocked && (
           <span className="text-[10px] font-bold px-3 py-1 rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
-            ⏱ E{currentEpisode} picks hidden until Wed 7pm CT
+            ⏱ E{currentEpisode} picks hidden until picks lock
           </span>
         )}
       </div>
@@ -202,7 +203,7 @@ export default function PoolBoardPage() {
                 );
               })}
               <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">WEEKS SAFE</th>
-              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">POOL PTS</th>
+              <th className="text-center p-2.5 text-white/35 font-bold text-[10px] tracking-wider w-20">CHAMP PTS</th>
             </tr>
           </thead>
           <tbody>
@@ -285,8 +286,8 @@ export default function PoolBoardPage() {
                   <td className="p-2.5 text-center">
                     {(() => {
                       const t = managerTotals.find(t => t.manager_id === m.id);
-                      const pts = t ? Math.round(t.pool_score) : 0;
-                      return pts > 0 ? <span className="text-[13px] font-bold text-emerald-400">{pts}</span> : <span className="text-white/20">—</span>;
+                      const pts = t ? Math.round(Number(t.champ_pool) * 100) / 100 : 0;
+                      return t ? <span className="text-[13px] font-bold text-emerald-400">{pts}</span> : <span className="text-white/20">—</span>;
                     })()}
                   </td>
                 </tr>
@@ -332,8 +333,8 @@ export default function PoolBoardPage() {
       </div>
 
       <div className="mt-3 bg-white/[0.02] border border-white/[0.04] rounded-lg p-3 text-[11px] text-white/25">
-        <span className="font-bold text-white/40">Pool Score Formula:</span>{' '}
-        (Weeks Safe / {totalPoolWeeks}) × (25% of Top Fantasy Score)
+        <span className="font-bold text-white/40">How the Pool counts:</span>{' '}
+        managers are ranked by weeks survived; that rank earns championship points (12 for 1st down to 0 for 12th) × 1.5. Tied managers split the points for the places they share.
       </div>
 
       {/* Survivor Pick Popularity Heatmap */}
