@@ -30,6 +30,7 @@ interface CalcResult {
   managerId?: string; name: string; submitted?: boolean; cardTotal: number; chip: string | null; chipNote: string | null;
   opponent: string | null; h2hPoints: number | null; h2hNote: string | null; shadowBeat: number;
 }
+interface ActivityRow { id: string; created_at: string; type: string; message: string; metadata: any; manager_id: string | null }
 interface CalcResponse { success: boolean; dryRun?: boolean; titleAnswerRecorded: boolean; results: CalcResult[]; error?: string }
 
 const fsgRecapUrl = (ep: number) => `https://www.fantasysurvivorgame.com/episode-recap/season/${SEASON_NUMBER}#episode${ep}`;
@@ -113,9 +114,23 @@ function AdminContent() {
   // Season tab
   const [nextEpisodeTitle, setNextEpisodeTitle] = useState('');
 
-  const [tab, setTab] = useState<'results' | 'title' | 'calculate' | 'season' | 'tools'>('results');
+  const [tab, setTab] = useState<'results' | 'title' | 'calculate' | 'season' | 'flags' | 'tools'>('results');
 
-  useEffect(() => { loadData(); }, []);
+  // Flags ("This looks wrong") + recent activity
+  const [activity, setActivity] = useState<ActivityRow[]>([]);
+
+  useEffect(() => { loadData(); loadActivity(); }, []);
+
+  async function loadActivity() {
+    const { data } = await supabase.from('activity_log').select('id, created_at, type, message, metadata, manager_id')
+      .eq('season_id', SEASON_ID).order('created_at', { ascending: false }).limit(200);
+    setActivity((data || []) as ActivityRow[]);
+  }
+
+  async function resolveFlag(row: ActivityRow) {
+    const { error } = await supabase.from('activity_log').update({ metadata: { ...(row.metadata || {}), resolved: true } }).eq('id', row.id);
+    if (error) setError(error.message); else await loadActivity();
+  }
   useEffect(() => { loadEpisodeData(selectedEpisode); }, [selectedEpisode]);
 
   async function loadData() {
@@ -296,6 +311,9 @@ function AdminContent() {
   const nameOf = (id: string) => survivors.find(s => s.id === id)?.name || '?';
   const playable = useMemo(() => survivors.filter(s => s.is_playable), [survivors]);
   const missingCards = managers.filter(m => !submittedIds.includes(m.id));
+  const flags = activity.filter(a => a.metadata?.kind === 'score_flag');
+  const openFlags = flags.filter(f => !f.metadata?.resolved);
+  const fmtTime = (iso: string) => new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
   if (loading) {
     return <div className="max-w-4xl mx-auto px-4 py-12 text-center"><div className="text-4xl mb-4 animate-pulse">🔥</div><p className="text-white/30 text-sm">Loading admin panel...</p></div>;
@@ -336,6 +354,7 @@ function AdminContent() {
           { key: 'title' as const, label: '2 · Title Answer' },
           { key: 'calculate' as const, label: '3 · Calculate' },
           { key: 'season' as const, label: '4 · Advance' },
+          { key: 'flags' as const, label: `🚩 Flags${openFlags.length ? ` (${openFlags.length})` : ''}` },
           { key: 'tools' as const, label: '🔧 Tools' },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
@@ -540,6 +559,38 @@ function AdminContent() {
             </p>
             <Btn onClick={advanceEpisode} disabled={busy === 'advance'}>{busy === 'advance' ? '⏳ Advancing...' : `Advance to episode ${currentEpisode + 1}`}</Btn>
           </>)}
+        </Card>
+      </>)}
+
+      {/* ---- FLAGS ---- */}
+      {tab === 'flags' && (<>
+        <Card>
+          <H2>🚩 Score questions from managers</H2>
+          <p className="text-xs text-white/40 mb-3">Sent from the &quot;This looks wrong&quot; button on a breakdown. Fix the input and re-run Calculate if needed, then mark it resolved.</p>
+          {flags.length === 0 ? <p className="text-xs text-white/50">No flags yet.</p> : (
+            <div className="space-y-2">
+              {flags.map(f => (
+                <div key={f.id} className="rounded-lg p-3 text-xs flex items-start gap-3 flex-wrap" style={{ background: f.metadata?.resolved ? 'rgba(255,255,255,0.02)' : 'rgba(255,107,53,0.06)', border: `1px solid ${f.metadata?.resolved ? 'rgba(255,255,255,0.06)' : 'rgba(255,107,53,0.25)'}` }}>
+                  <div className="flex-1 min-w-[220px]">
+                    <div className="text-white/85">{f.message}</div>
+                    <div className="text-white/40 mt-1">{fmtTime(f.created_at)}{f.metadata?.resolved ? ' · resolved' : ''}</div>
+                  </div>
+                  {f.metadata?.about_manager_id && f.metadata?.episode && (
+                    <Link href={`/breakdown/${f.metadata.about_manager_id}/${f.metadata.episode}`} className="text-[#3fc0f0] underline whitespace-nowrap">Open breakdown</Link>
+                  )}
+                  {!f.metadata?.resolved && <button onClick={() => resolveFlag(f)} className="px-3 py-1 rounded-md text-[11px] font-bold cursor-pointer" style={{ background: 'rgba(74,222,128,0.1)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}>Mark resolved</button>}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+        <Card>
+          <H2>Recent activity</H2>
+          <div className="space-y-1 text-xs">
+            {activity.filter(a => a.metadata?.kind !== 'score_flag').slice(0, 40).map(a => (
+              <div key={a.id} className="flex gap-3 text-white/65"><span className="text-white/35 whitespace-nowrap w-28 shrink-0">{fmtTime(a.created_at)}</span><span>{a.message}</span></div>
+            ))}
+          </div>
         </Card>
       </>)}
 
