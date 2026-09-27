@@ -33,7 +33,10 @@ interface PickRow {
 interface Fixture { id: string; round: number; manager_a: string; manager_b: string; }
 
 type Slots = Record<RosterSlot, string | null>;
-type PickerKey = RosterSlot | 'title' | 'pool' | 'backdoor' | 'hedge';
+type PickerKey = RosterSlot | 'title' | 'pool' | 'backdoor' | 'hedge' | 'q0' | 'q1' | 'q2' | 'q3' | 'q4';
+
+// Quinfecta (finale only): index i = predicted FSG place i+1 (1st = Sole Survivor)
+const QUIN_PLACES = ['1st — Sole Survivor 👑', '2nd', '3rd', '4th', '5th'];
 
 const EMPTY_SLOTS: Slots = { reward: null, immunity: null, going_home: null, mop: null };
 const SLOT_LABEL: Record<RosterSlot, string> = Object.fromEntries(ROSTER_SLOTS.map(s => [s.key, s.label])) as Record<RosterSlot, string>;
@@ -194,6 +197,7 @@ function PicksContent() {
   const [chip, setChip] = useState<PickChip | null>(null);
   const [chipSlot, setChipSlot] = useState<RosterSlot | null>(null);
   const [hedgeAlt, setHedgeAlt] = useState<string | null>(null);
+  const [quinfecta, setQuinfecta] = useState<(string | null)[]>([null, null, null, null, null]);
 
   const [openPicker, setOpenPicker] = useState<PickerKey | null>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -243,6 +247,14 @@ function PicksContent() {
       setChip(current?.chip ?? null);
       setChipSlot(current?.chip_slot ?? null);
       setHedgeAlt(current?.hedge_alt_id ?? null);
+
+      if (epRow?.is_finale) {
+        const { data: q, error: qErr } = await supabase.from('quinfecta_predictions')
+          .select('place_1_id, place_2_id, place_3_id, place_4_id, place_5_id')
+          .eq('season_id', SEASON_ID).eq('manager_id', manager.id).maybeSingle();
+        if (qErr) throw qErr;
+        setQuinfecta(q ? [q.place_1_id, q.place_2_id, q.place_3_id, q.place_4_id, q.place_5_id] : [null, null, null, null, null]);
+      }
 
       if (epRow?.h2h_round) {
         const { data: fx, error: fxErr } = await supabase
@@ -343,8 +355,17 @@ function PicksContent() {
       if (chip === 'hedge' && chipSlot && !hedgeAlt) list.push(`Choose your Hedge backup for ${SLOT_LABEL[chipSlot]}.`);
       if (hedgeError) list.push(hedgeError);
     }
+    if (episode?.is_finale) {
+      quinfecta.forEach((id, i) => {
+        if (!id) list.push(`Pick your Quinfecta ${QUIN_PLACES[i].split(' ')[0]} place.`);
+        else if (!eligibleIds.has(id)) list.push(`Your Quinfecta ${QUIN_PLACES[i].split(' ')[0]} pick is no longer in the game.`);
+      });
+      const seen = new Map<string, number[]>();
+      quinfecta.forEach((id, i) => { if (id) seen.set(id, [...(seen.get(id) || []), i + 1]); });
+      for (const [id, places] of seen) if (places.length > 1) list.push(`${byId.get(id)?.name || 'A survivor'} is in your Quinfecta twice (places ${places.join(' and ')}). Each place needs a different survivor.`);
+    }
     return list;
-  }, [slots, slotsBySurvivor, slotErrors, byId, eligibleIds, titlePick, poolStatus, poolPick, chip, chipDef, chipSlot, hedgeAlt, hedgeError, chipsAllowed, usedChipIds]);
+  }, [slots, slotsBySurvivor, slotErrors, byId, eligibleIds, titlePick, poolStatus, poolPick, chip, chipDef, chipSlot, hedgeAlt, hedgeError, chipsAllowed, usedChipIds, episode, quinfecta]);
 
   // Tags shown in pickers so managers can see where a survivor is already used
   const rosterTags = useMemo(() => {
@@ -404,6 +425,15 @@ function PicksContent() {
         ? await supabase.from('weekly_picks').update(row).eq('id', existingPick.id)
         : await supabase.from('weekly_picks').insert(row);
       if (error) throw error;
+      if (episode.is_finale) {
+        const now = new Date().toISOString();
+        const { error: qErr } = await supabase.from('quinfecta_predictions').upsert({
+          season_id: SEASON_ID, manager_id: manager.id,
+          place_1_id: quinfecta[0], place_2_id: quinfecta[1], place_3_id: quinfecta[2], place_4_id: quinfecta[3], place_5_id: quinfecta[4],
+          submitted_at: now, updated_at: now,
+        }, { onConflict: 'season_id,manager_id' });
+        if (qErr) throw qErr;
+      }
       setSaveMessage({ ok: true, text: `Picks saved. You can change them until ${formatLock(episode.lock_at)}.` });
       setSubmitAttempted(false);
       await loadData();
@@ -544,6 +574,31 @@ function PicksContent() {
             <p style={{ fontSize: '12px', color: 'rgba(248,113,113,0.7)', margin: 0 }}>You’ve been <b>Burnt</b> — no more pool picks this season.</p>
           )}
         </Section>
+
+        {/* ── QUINFECTA (finale only) ── */}
+        {episode?.is_finale && (
+          <Section title="Quinfecta" icon="🎯" error={submitAttempted && quinfecta.some(q => !q)}
+            badge={quinfecta.every(Boolean) ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={quinfecta.every(Boolean) ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
+            <Hint>Predict the final five in finishing order. Exact place +5, one place off +2, all five exact +10 bonus. Five different survivors.</Hint>
+            {QUIN_PLACES.map((label, i) => {
+              const key = `q${i}` as PickerKey;
+              const id = quinfecta[i];
+              const dupe = !!id && quinfecta.some((x, j) => j !== i && x === id);
+              return (
+                <div key={label} style={{ marginBottom: '10px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>{label}</div>
+                  <Chosen s={id ? byId.get(id) || null : null} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
+                  {openPicker === key && !isLocked && (
+                    <PickerGrid options={rosterEligible} selectedId={id} tribes={tribes}
+                      tags={Object.fromEntries(quinfecta.map((x, j) => [x, `Quinfecta ${QUIN_PLACES[j].split(' ')[0]}`]).filter(([x], j) => x && j !== i))}
+                      onSelect={(sid) => { setQuinfecta(prev => prev.map((v, j) => (j === i ? sid : v))); setOpenPicker(null); setSaveMessage(null); }} />
+                  )}
+                  {dupe && <ErrorLine>{byId.get(id!)?.name} is in another Quinfecta place too. Each place needs a different survivor.</ErrorLine>}
+                </div>
+              );
+            })}
+          </Section>
+        )}
 
         {/* ── CHIP ── */}
         <Section title="Chip (optional)" icon="🎰"

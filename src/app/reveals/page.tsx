@@ -14,7 +14,8 @@ import { useAuth } from '@/context/AuthContext';
 import { SEASON_ID, TRIBE_COLORS, ROSTER_SLOTS, PICK_CHIPS, type RosterSlot } from '@/lib/constants';
 
 interface Survivor { id: string; name: string; tribe: string; photo_url: string | null; eliminated_episode: number | null }
-interface EpisodeRow { number: number; lock_at: string; h2h_round: number | null; status: string; is_couples_week: boolean; is_rivalry_week: boolean }
+interface EpisodeRow { number: number; lock_at: string; h2h_round: number | null; status: string; is_couples_week: boolean; is_rivalry_week: boolean; is_finale: boolean }
+interface Quin { manager_id: string; place_1_id: string | null; place_2_id: string | null; place_3_id: string | null; place_4_id: string | null; place_5_id: string | null }
 interface Pick {
   manager_id: string; reward_pick_id: string | null; immunity_pick_id: string | null; going_home_pick_id: string | null;
   mop_pick_id: string | null; title_pick_id: string | null; chip: string | null; chip_slot: string | null; hedge_alt_id: string | null;
@@ -35,6 +36,7 @@ export default function RevealsPage() {
   const [submittedIds, setSubmittedIds] = useState<string[]>([]);
   const [fixtures, setFixtures] = useState<Fixture[]>([]);
   const [scores, setScores] = useState<Score[]>([]);
+  const [quins, setQuins] = useState<Quin[]>([]);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => { const iv = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(iv); }, []);
@@ -43,7 +45,7 @@ export default function RevealsPage() {
     (async () => {
       const [{ data: season }, { data: eps }, { data: surv }] = await Promise.all([
         supabase.from('seasons').select('current_episode').eq('id', SEASON_ID).single(),
-        supabase.from('episodes').select('number, lock_at, h2h_round, status, is_couples_week, is_rivalry_week').eq('season_id', SEASON_ID).order('number'),
+        supabase.from('episodes').select('number, lock_at, h2h_round, status, is_couples_week, is_rivalry_week, is_finale').eq('season_id', SEASON_ID).order('number'),
         supabase.from('survivors').select('id, name, tribe, photo_url, eliminated_episode').eq('season_id', SEASON_ID),
       ]);
       setEpisodes((eps || []) as EpisodeRow[]);
@@ -73,6 +75,11 @@ export default function RevealsPage() {
         setPicks((p || []) as Pick[]);
         setSubmittedIds((p || []).map((r: any) => r.manager_id));
         setScores((s || []) as Score[]);
+        if (ep.is_finale) {
+          const { data: q } = await supabase.from('quinfecta_predictions')
+            .select('manager_id, place_1_id, place_2_id, place_3_id, place_4_id, place_5_id').eq('season_id', SEASON_ID);
+          setQuins((q || []) as Quin[]);
+        } else setQuins([]);
       }
       if (ep.h2h_round) {
         const { data: fx } = await supabase.from('fixtures').select('id, manager_a, manager_b').eq('season_id', SEASON_ID).eq('round', ep.h2h_round);
@@ -136,6 +143,22 @@ export default function RevealsPage() {
               <span className="text-white/45 w-24 shrink-0">🌊 {p.pool_backdoor_id ? 'Backdoor' : 'Pool'}</span>
               <span className="flex-1 flex justify-end"><Chip s={byId.get(p.pool_pick_id || p.pool_backdoor_id || '')} /></span>
             </div>
+            {(() => {
+              const q = quins.find(x => x.manager_id === managerId);
+              if (!q) return null;
+              const ids = [q.place_1_id, q.place_2_id, q.place_3_id, q.place_4_id, q.place_5_id];
+              return (
+                <div className="pt-1 border-t border-white/[0.05]">
+                  <div className="text-white/45 mb-1">🎯 Quinfecta</div>
+                  {ids.map((id, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2">
+                      <span className="text-white/40 w-8">{i + 1}{['st', 'nd', 'rd', 'th', 'th'][i]}</span>
+                      <span className="flex-1 flex justify-end"><Chip s={byId.get(id || '')} /></span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
             {chipDef && <div className="text-[10px] text-[#3fc0f0] pt-1">{chipDef.icon} {chipDef.name}{p.chip_slot ? ` on ${ROSTER_SLOTS.find(s => s.key === p.chip_slot)?.label}` : ''}</div>}
           </div>
         )}
