@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { SEASON_ID, TRIBE_COLORS, COUPLES } from '@/lib/constants';
 import { useAuth } from '@/context/AuthContext';
+import { useSeason } from '@/hooks/useSeason';
 import Link from 'next/link';
 
 // ============================================================
@@ -395,6 +396,7 @@ function ScoreTrackingChart({
 // ============================================================
 export default function HomePage() {
   const { manager: authManager, isLoading: authLoading } = useAuth();
+  const { season } = useSeason();
 
   const [loading, setLoading]         = useState(true);
   const [managers, setManagers]       = useState<Manager[]>([]);
@@ -597,7 +599,7 @@ export default function HomePage() {
           </div>
           <div style={{ textAlign: 'center', marginBottom: '18px' }}>
             <div style={{ fontSize: '13px', fontWeight: 700, letterSpacing: '3px', color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '4px' }}>Survivor OOO Fantasy</div>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>Season 50 · Episode {currentEpisode}</div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.2)' }}>{season?.name ?? ''} · Episode {currentEpisode}</div>
           </div>
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
             <div style={{ fontSize: '56px', fontWeight: 900, color: '#FF6B35', lineHeight: 1 }}>{Math.round(myTotal?.grand_total || 0)}</div>

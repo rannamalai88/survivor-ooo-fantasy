@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '@/lib/supabase/client';
+import { SEASON_ID } from '@/lib/constants';
 
 interface Manager {
   id: string;
@@ -46,6 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from('managers')
         .select('*')
+        // managers are season-scoped and names repeat across seasons
+        .eq('season_id', SEASON_ID)
         .order('draft_position', { ascending: true });
 
       if (error) {
