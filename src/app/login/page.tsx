@@ -1,17 +1,18 @@
 'use client';
 
 import { useAuth } from '@/context/AuthContext';
+import { useSeason } from '@/hooks/useSeason';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-const COMMISSIONER_PIN = '120888';
-
 export default function LoginPage() {
   const { manager, managers, isLoading, login } = useAuth();
+  const { season } = useSeason();
   const router = useRouter();
   const [pinPrompt, setPinPrompt] = useState<string | null>(null);
   const [pinInput, setPinInput] = useState('');
-  const [pinError, setPinError] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinChecking, setPinChecking] = useState(false);
 
   useEffect(() => {
     if (manager) router.push('/');
@@ -31,20 +32,34 @@ export default function LoginPage() {
     if (isCommish) {
       setPinPrompt(name);
       setPinInput('');
-      setPinError(false);
+      setPinError(null);
     } else {
       login(name);
       router.push('/');
     }
   };
 
-  const handlePinSubmit = () => {
-    if (pinInput === COMMISSIONER_PIN) {
-      login(pinPrompt!);
-      router.push('/');
-    } else {
-      setPinError(true);
+  const handlePinSubmit = async () => {
+    if (pinChecking || !pinInput) return;
+    setPinChecking(true);
+    try {
+      const res = await fetch('/api/auth/commissioner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pinInput }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        login(pinPrompt!);
+        router.push('/');
+        return;
+      }
+      setPinError(res.status === 401 ? 'Incorrect PIN. Try again.' : `Could not check PIN${data.error ? `: ${data.error}` : ''}.`);
       setPinInput('');
+    } catch {
+      setPinError('Could not reach the server. Try again.');
+    } finally {
+      setPinChecking(false);
     }
   };
 
@@ -56,7 +71,7 @@ export default function LoginPage() {
           <h1 className="text-2xl font-extrabold text-white tracking-tight mb-1">
             Survivor OOO <span style={{ color: '#FF6B35' }}>Fantasy</span>
           </h1>
-          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>Season 50</p>
+          <p className="text-sm" style={{ color: 'rgba(255,255,255,0.3)' }}>{season?.name ?? 'Loading...'}</p>
         </div>
 
         {pinPrompt ? (
@@ -72,16 +87,16 @@ export default function LoginPage() {
             <p className="text-xs text-center mb-4" style={{ color: 'rgba(255,255,255,0.3)' }}>Enter your PIN to sign in</p>
             <div className="flex gap-2 mb-3">
               <input type="password" value={pinInput}
-                onChange={(e) => { setPinInput(e.target.value); setPinError(false); }}
+                onChange={(e) => { setPinInput(e.target.value); setPinError(null); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') handlePinSubmit(); }}
                 placeholder="Enter PIN" autoFocus
                 className="flex-1 px-3 py-2 rounded-lg text-sm text-white placeholder-white/20 outline-none"
                 style={{ background: 'rgba(255,255,255,0.05)', border: pinError ? '1px solid rgba(255,80,80,0.5)' : '1px solid rgba(255,255,255,0.1)' }} />
-              <button onClick={handlePinSubmit} className="px-4 py-2 rounded-lg text-sm font-bold"
-                style={{ background: 'rgba(255,107,53,0.15)', color: '#FF6B35', border: '1px solid rgba(255,107,53,0.3)' }}>Go</button>
+              <button onClick={handlePinSubmit} disabled={pinChecking} className="px-4 py-2 rounded-lg text-sm font-bold"
+                style={{ background: 'rgba(255,107,53,0.15)', color: '#FF6B35', border: '1px solid rgba(255,107,53,0.3)', opacity: pinChecking ? 0.6 : 1 }}>{pinChecking ? '...' : 'Go'}</button>
             </div>
-            {pinError && <p className="text-xs text-center" style={{ color: '#FF5050' }}>Incorrect PIN. Try again.</p>}
-            <button onClick={() => { setPinPrompt(null); setPinInput(''); setPinError(false); }}
+            {pinError && <p className="text-xs text-center" style={{ color: '#FF5050' }}>{pinError}</p>}
+            <button onClick={() => { setPinPrompt(null); setPinInput(''); setPinError(null); }}
               className="w-full text-center text-xs mt-3 py-2" style={{ color: 'rgba(255,255,255,0.2)' }}>Back</button>
           </div>
         ) : (

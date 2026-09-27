@@ -18,7 +18,9 @@ npm run lint    # next lint
 
 There is no test suite. `npm run build` is the type check. Verify behavior by exercising the relevant page against the live Supabase project.
 
-Required env vars (`.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SEASON_ID`, `SUPABASE_SERVICE_ROLE_KEY`.
+Required env vars (`.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SEASON_ID`, `SUPABASE_SERVICE_ROLE_KEY`, `COMMISSIONER_PIN`.
+
+`COMMISSIONER_PIN` is server-only (no `NEXT_PUBLIC_` prefix) and is checked by `POST /api/auth/commissioner`; never inline it in client code. `NEXT_PUBLIC_*` values are baked in at build time, so changing one in Vercel needs a redeploy.
 
 ## Working conventions
 
