@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
 import { SEASON_ID, eliminationOrderFromPlace, placeFromEliminationOrder } from '@/lib/constants';
 import { loadFSG, summaryIssues, toEpisodeEvents } from '@/lib/fsg-load';
+import { fetchFSGRecapPage, parseRecap } from '@/lib/fsg-parser';
 import { walkPool } from '@/lib/pool';
 import { deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta, type ScoringContext, type EpisodeEvent } from '@/lib/scoring';
 
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
     const loaded = await loadFSG(supabase, seasonId);
     const nameOf = (id: string) => loaded.survivors.find(s => s.id === id)?.name ?? id;
 
-    if (searchParams.get('selftest')) return NextResponse.json(runSelfTest(loaded, nameOf));
+    if (searchParams.get('selftest')) return NextResponse.json(await runSelfTest(loaded, nameOf));
 
     const episodeParam = searchParams.get('episode');
     const episodes = episodeParam ? loaded.episodes.filter(e => e.episode === Number(episodeParam)) : loaded.episodes;
@@ -66,7 +67,7 @@ export async function GET(request: Request) {
 
 // --- Spec §8 regression + rule unit checks ------------------------------------------
 
-function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: (id: string) => string) {
+async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: (id: string) => string) {
   const checks: { name: string; pass: boolean; detail?: string }[] = [];
   const check = (name: string, pass: boolean, detail?: string) => checks.push({ name, pass, detail: pass ? undefined : detail });
   const idByName = (n: string) => loaded.survivors.find(s => s.name === n)?.id ?? `missing:${n}`;
@@ -103,6 +104,21 @@ function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: (id: s
   check('Pool: missed pick drowns, idol does not cover it', pw3.status === 'drowned' && pw3.drownedEpisode === 3 && !pw3.idolUsed, JSON.stringify(pw3));
   const pw4 = walkPool({ 2: pk('z'), 3: pk('x'), 4: pk(null, 'y'), 5: pk('z') }, sv, false, 5);
   check('Pool: correct backdoor reactivates without incrementing', pw4.status === 'active' && pw4.weeksSurvived === 2 && pw4.weeks[2].type === 'backdoor_hit', JSON.stringify(pw4));
+
+  // Finale + edge cases, parsed from the complete S50 recap (known outcomes)
+  try {
+    const s50 = parseRecap(await fetchFSGRecapPage(50));
+    const e13 = s50.find(e => e.episode === 13), e1 = s50.find(e => e.episode === 1), e6 = s50.find(e => e.episode === 6);
+    check('S50 recap parses all 13 episodes with no errors', s50.length === 13 && s50.every(e => e.errors.length === 0), s50.flatMap(e => e.errors).join(' | '));
+    check('Finale: Sole Survivor parsed at place 1 (→ elimination_order = CAST_SIZE)', !!e13?.soleSurvivor && e13.soleSurvivor.place === 1 && eliminationOrderFromPlace(1) === 21, JSON.stringify(e13?.soleSurvivor));
+    const oog = (e13?.departures || []).filter(d => d.kind === 'Out of game').map(d => d.place).sort();
+    check('Finale: runners-up parsed as Out of game at places 2 and 3', JSON.stringify(oog) === '[2,3]', JSON.stringify(e13?.departures));
+    check('Finale: Sole Survivor is not a departure', !!e13 && !e13.departures.some(d => d.fsgId === e13.soleSurvivor?.fsgId));
+    check('Quit/Evac parsed with its place (S50 E1, 23rd)', !!e1?.departures.find(d => d.kind === 'Quit/Evac' && d.place === 23), JSON.stringify(e1?.departures));
+    check('Triple boot parsed (S50 E6, 3 departures)', e6?.departures.length === 3, JSON.stringify(e6?.departures));
+  } catch (err: any) {
+    check('S50 recap reachable for finale checks', false, err.message);
+  }
 
   // Spec §8 — E1 regression against the live FSG page
   const e1 = loaded.episodes.find(e => e.episode === 1);

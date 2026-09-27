@@ -1,13 +1,13 @@
 // src/app/api/scoring/override/route.ts
+// Commissioner fixes. Actions: adjust_survivor_score, idol_penalty,
+// set_net_answer (Title answer), update_pool_status. Scores themselves are
+// never overridden here — fix the input and re-run Calculate.
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createServiceClient } from '@/lib/supabase/server';
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+    const supabase = createServiceClient();
     const body = await request.json();
     const { action, seasonId } = body;
 
@@ -58,28 +58,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, message: `Adjustment of ${adjustment} applied` });
       }
 
-      // --- Override a manager's total fantasy score for an episode ---
-      case 'override_manager_score': {
-        const { managerId, episode, newScore, reason } = body;
-        const { error } = await supabase
-          .from('manager_scores')
-          .update({ fantasy_points: newScore })
-          .eq('season_id', seasonId)
-          .eq('manager_id', managerId)
-          .eq('episode', episode);
-
-        await supabase.from('activity_log').insert({
-          season_id: seasonId,
-          type: 'admin',
-          message: `Manager score override: ${managerId} ep ${episode} → ${newScore} (${reason || 'manual'})`,
-          manager_id: managerId,
-          metadata: { episode, newScore, reason },
-        });
-
-        return NextResponse.json({ success: true });
-      }
-
-      // --- Apply idol-in-pocket penalty (-5) ---
       case 'idol_penalty': {
         const { survivorId, episode } = body;
         // Add -5 to the survivor's manual_adjustment
@@ -149,47 +127,6 @@ export async function POST(request: NextRequest) {
           message: `Pool status: ${managerId} → ${status}`,
           manager_id: managerId,
           metadata: { status, drownedEpisode },
-        });
-
-        return NextResponse.json({ success: true });
-      }
-
-      // --- Override captain designation ---
-      case 'override_captain': {
-        const { managerId, episode, captainSurvivorId } = body;
-        await supabase
-          .from('weekly_picks')
-          .update({ captain_id: captainSurvivorId })
-          .eq('season_id', seasonId)
-          .eq('manager_id', managerId)
-          .eq('episode', episode);
-
-        await supabase.from('activity_log').insert({
-          season_id: seasonId,
-          type: 'admin',
-          message: `Captain override: ${managerId} ep ${episode} → ${captainSurvivorId}`,
-          manager_id: managerId,
-          metadata: { episode, captainSurvivorId },
-        });
-
-        return NextResponse.json({ success: true });
-      }
-
-      // --- Restore captain privilege (undo captain-lost) ---
-      case 'restore_captain_privilege': {
-        const { managerId, episode } = body;
-        await supabase
-          .from('manager_scores')
-          .update({ captain_lost: false })
-          .eq('season_id', seasonId)
-          .eq('manager_id', managerId)
-          .eq('episode', episode);
-
-        await supabase.from('activity_log').insert({
-          season_id: seasonId,
-          type: 'admin',
-          message: `Captain privilege restored for ${managerId} (was lost ep ${episode})`,
-          manager_id: managerId,
         });
 
         return NextResponse.json({ success: true });
