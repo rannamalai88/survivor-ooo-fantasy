@@ -67,7 +67,8 @@ export default function RulesPage() {
       </div>
 
         <Section id="overview" icon="🔥" title="Overview">
-          <Rule>No draft, no rosters, no captains. {b('Every week resets.')} Each week you fill a 5-slot pick card from the {CAST_SIZE} castaways still in the game.</Rule>
+          <Rule>No draft, no rosters, no captains. {b('Every week resets.')} In episodes 2–12 you fill a 5-slot pick card from the {CAST_SIZE} castaways still in the game.</Rule>
+          <Rule>{b('The finale (Episode 13) has no card')} — head-to-head is over. It&apos;s just your Pool pick and your Quinfecta, both settled after the finale airs.</Rule>
           <Rule>Your card total decides your {b('Head-to-Head')} fixture against one other manager that week.</Rule>
           <Rule>The {b('Survivor Pool')} and {b('Quinfecta')} run alongside, and all three feed the {b('Championship')}.</Rule>
           <Rule>Picks lock {b('Wednesday 7:00pm CT')} each episode. After that your card is read-only and everyone&apos;s cards appear on Matchups.</Rule>
@@ -101,6 +102,7 @@ export default function RulesPage() {
           <Rule>{b('Going Home')} pays if your pick leaves for any reason — voted out, quit, or medically evacuated.</Rule>
           <Rule>Commissioner adjustments are added to a slot and are never multiplied.</Rule>
           <Rule>No card submitted = 0 for the week (you still play your fixture).</Rule>
+          <Rule>The card runs episodes 2–12 only. There is no card in the finale.</Rule>
         </Section>
 
         <Section id="chips" icon="🎰" title="Chips" color="rgba(5,169,230,0.2)">

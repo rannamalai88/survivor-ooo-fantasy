@@ -42,6 +42,9 @@ export async function POST(request: NextRequest) {
     ]);
     const totalEpisodes = season?.total_episodes || 13;
     const isFinaleRun = epRow?.is_finale ?? episode === totalEpisodes;
+    // Head-to-head fantasy ends after E12. The finale scores no cards — it only
+    // resolves the Pool and the Quinfecta.
+    const cardsScored = !isFinaleRun;
     if (!dryRun && !epRow?.h2h_round && !isFinaleRun) {
       return NextResponse.json({ error: `Episode ${episode} has no H2H round and isn't the finale, so it isn't scored (E1 is parsed but never scored).` }, { status: 400 });
     }
@@ -105,6 +108,8 @@ export async function POST(request: NextRequest) {
     if (!dryRun) {
       const { error } = await supabase.from('score_lines').delete().eq('season_id', seasonId).eq('episode', episode);
       if (error) throw error;
+    }
+    if (!dryRun && cardsScored) {
       const rows = managers.flatMap(m => results.get(m.id)!.lines.map(l => ({
         season_id: seasonId, episode, manager_id: m.id, slot: l.slot, survivor_id: l.survivorId,
         base_points: l.basePoints, multiplier: l.multiplier, bonus: l.bonus, penalty: l.penalty, total: l.total, reason: l.reason,
@@ -144,6 +149,10 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+    if (dryRun && !cardsScored) {
+      return NextResponse.json({ success: true, dryRun: true, episode, finale: true, titleAnswerRecorded: true, results: [],
+        message: 'Finale: no cards are scored. Calculate & save resolves the Pool and the Quinfecta.' });
+    }
     if (dryRun) {
       const nameOfMgr = (id: string) => managers.find(m => m.id === id)?.name ?? '?';
       return NextResponse.json({
@@ -169,8 +178,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── manager_scores ──
-    {
+    // ── manager_scores (none at the finale) ──
+    if (!cardsScored) {
+      const { error } = await supabase.from('manager_scores').delete().eq('season_id', seasonId).eq('episode', episode);
+      if (error) throw error;
+    } else {
       const now = new Date().toISOString();
       const rows = managers.map(m => {
         const r = results.get(m.id)!;
@@ -293,7 +305,9 @@ export async function POST(request: NextRequest) {
       episode,
       titleAnswerRecorded: ctx.titleAnswerId !== undefined,
       quinfectaScored: quinfectaReady,
-      results: managers.map(m => {
+      finale: !cardsScored,
+      message: cardsScored ? undefined : `Finale: Pool resolved${quinfectaReady ? ' and Quinfecta scored' : ' (Quinfecta waits for all five final places)'}. No cards are scored.`,
+      results: !cardsScored ? [] : managers.map(m => {
         const r = results.get(m.id)!;
         return {
           managerId: m.id,

@@ -32,7 +32,7 @@ interface CalcResult {
   opponent: string | null; h2hPoints: number | null; h2hNote: string | null; shadowBeat: number;
 }
 interface ActivityRow { id: string; created_at: string; type: string; message: string; metadata: any; manager_id: string | null }
-interface CalcResponse { success: boolean; dryRun?: boolean; titleAnswerRecorded: boolean; results: CalcResult[]; error?: string }
+interface CalcResponse { success: boolean; dryRun?: boolean; finale?: boolean; message?: string; titleAnswerRecorded: boolean; results: CalcResult[]; error?: string }
 
 const fsgRecapUrl = (ep: number) => `https://www.fantasysurvivorgame.com/episode-recap/season/${SEASON_NUMBER}#episode${ep}`;
 
@@ -478,6 +478,7 @@ function AdminContent() {
               <H2>{calcResult.dryRun ? 'Preview — nothing saved' : 'Saved results'}</H2>
               {!calcResult.titleAnswerRecorded && <span className="text-[10px] font-bold text-warn">Title answer not recorded</span>}
             </div>
+            {calcResult.message && <p className="text-sm text-ink mb-3">{calcResult.message}</p>}
             <div className="overflow-x-auto rounded-lg border border-line">
               <table className="w-full text-xs border-collapse">
                 <thead>

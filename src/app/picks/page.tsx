@@ -310,18 +310,21 @@ function PicksContent() {
   // Everything that blocks submission, in card order
   const issues = useMemo(() => {
     const list: string[] = [];
-    for (const { key, label } of ROSTER_SLOTS) {
+    // The finale has no card (head-to-head ends after E12): only Pool + Quinfecta.
+    const cardOpen = !episode?.is_finale;
+    if (cardOpen) for (const { key, label } of ROSTER_SLOTS) {
       if (!slots[key]) list.push(`Pick your ${label}.`);
     }
-    const dupes = Object.entries(slotsBySurvivor).filter(([, ks]) => ks.length > 1);
+    const dupes = cardOpen ? Object.entries(slotsBySurvivor).filter(([, ks]) => ks.length > 1) : [];
     for (const [id, ks] of dupes) {
       list.push(`${byId.get(id)?.name || 'A survivor'} is picked for ${ks.map(k => SLOT_LABEL[k]).join(' and ')}. The four roster picks must be four different survivors.`);
     }
-    for (const { key } of ROSTER_SLOTS) {
+    if (cardOpen) for (const { key } of ROSTER_SLOTS) {
       const id = slots[key];
       if (id && !eligibleIds.has(id) && !(slotsBySurvivor[id].length > 1)) list.push(slotErrors[key]!);
     }
-    if (!titlePick) list.push('Pick who says the episode title.');
+    if (!cardOpen) { /* no Title at the finale */ }
+    else if (!titlePick) list.push('Pick who says the episode title.');
     else if (!byId.get(titlePick) || (byId.get(titlePick)!.is_playable && !eligibleIds.has(titlePick))) list.push('Your Title pick is no longer in the game. Pick someone else.');
     if (poolStatus === 'active' && !poolPick) list.push('Make your Survivor Pool pick.');
     // Outside E2–E12 no chip is written at all (see savePicks), so nothing to validate.
@@ -384,11 +387,11 @@ function PicksContent() {
       season_id: SEASON_ID,
       manager_id: manager.id,
       episode: currentEp,
-      reward_pick_id: slots.reward,
-      immunity_pick_id: slots.immunity,
-      going_home_pick_id: slots.going_home,
-      mop_pick_id: slots.mop,
-      title_pick_id: titlePick,
+      reward_pick_id: episode.is_finale ? null : slots.reward,
+      immunity_pick_id: episode.is_finale ? null : slots.immunity,
+      going_home_pick_id: episode.is_finale ? null : slots.going_home,
+      mop_pick_id: episode.is_finale ? null : slots.mop,
+      title_pick_id: episode.is_finale ? null : titlePick,
       chip: chipsAllowed ? chip : null,
       chip_slot: chipsAllowed && chipDef?.needsSlot ? chipSlot : null,
       hedge_alt_id: chipsAllowed && chip === 'hedge' ? hedgeAlt : null,
@@ -429,8 +432,9 @@ function PicksContent() {
   if (!season) return <Page><EmptyState icon="🏝" title="No active season found" /></Page>;
 
   const titleSurvivor = titlePick ? byId.get(titlePick) || null : null;
+  const finale = !!episode?.is_finale;
   const requiredDone = [
-    ...ROSTER_SLOTS.map(s => !!slots[s.key]), !!titlePick,
+    ...(finale ? [] : [...ROSTER_SLOTS.map(s => !!slots[s.key]), !!titlePick]),
     ...(poolStatus === 'active' ? [!!poolPick] : []),
     ...(episode?.is_finale ? [quinfecta.every(Boolean)] : []),
   ];
@@ -482,8 +486,12 @@ function PicksContent() {
       )}
       {!existingPick && isLocked && episode && <Callout tone="negative" className="mb-3">You didn’t submit a card for episode {currentEp}.</Callout>}
 
-      {/* ── ROSTER SLOTS ── */}
-      {ROSTER_SLOTS.map(({ key, label, icon, desc }) => {
+      {finale && (
+        <Callout tone="accent" className="mb-3">🏆 Head-to-head is over. Finale week is just your <b>Pool</b> pick and your <b>Quinfecta</b> — both are settled after the finale airs.</Callout>
+      )}
+
+      {/* ── ROSTER SLOTS (not in the finale) ── */}
+      {!finale && ROSTER_SLOTS.map(({ key, label, icon, desc }) => {
         const id = slots[key];
         const s = id ? byId.get(id) || null : null;
         const err = slotErrors[key];
@@ -504,7 +512,7 @@ function PicksContent() {
       })}
 
       {/* ── TITLE ── */}
-      <Section title="Title" icon="💬" error={submitAttempted && !titlePick}
+      {!finale && <Section title="Title" icon="💬" error={submitAttempted && !titlePick}
         badge={titlePick ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={titlePick ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
         {season.next_episode_title && (
           <div className="mb-3 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2.5">
@@ -518,7 +526,7 @@ function PicksContent() {
           <PickerGrid options={rosterEligible} pinned={titleOnly} selectedId={titlePick} tribes={tribes}
             onSelect={(sid) => { setTitlePick(sid); setOpenPicker(null); setSaveMessage(null); }} />
         )}
-      </Section>
+      </Section>}
 
       {/* ── POOL ── */}
       <Section title="Survivor Pool" icon="🌊" error={submitAttempted && poolStatus === 'active' && !poolPick}
@@ -568,8 +576,8 @@ function PicksContent() {
         </Section>
       )}
 
-      {/* ── CHIP ── */}
-      <Section title="Chip (optional)" icon="🎰"
+      {/* ── CHIP (not in the finale) ── */}
+      {!finale && <Section title="Chip (optional)" icon="🎰"
         badge={!chipsAllowed ? 'NOT THIS WEEK' : chip ? 'PLAYING' : 'NONE'}
         badgeColor={!chipsAllowed ? '#9aa0a8' : chip ? '#3fc0f0' : '#9aa0a8'}>
         {!chipsAllowed ? (
@@ -635,7 +643,7 @@ function PicksContent() {
             </div>
           )}
         </>)}
-      </Section>
+      </Section>}
 
       {/* ── SUBMIT (sticks above the phone tab bar) ── */}
       <div className="sticky z-30 -mx-4 px-4 pt-3 pb-3 mt-2 bg-gradient-to-t from-canvas via-canvas to-canvas/0" style={{ bottom: 'var(--tabbar-h)' }}>

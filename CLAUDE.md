@@ -43,7 +43,7 @@ These are not optional; they exist because violating them has cost real debuggin
 
 **Auth is name-only, not real auth.** `AuthContext` loads the `managers` rows for `NEXT_PUBLIC_SEASON_ID` (managers are season-scoped and names repeat across seasons — never load them unfiltered); "login" picks a name and saves it to localStorage (`survivor-ooo-manager`). `AuthGuard requireAdmin` gates on `managers.is_commissioner`. RLS is fully permissive, so the anon client can write anything. This is a deliberate tradeoff for a 12-person private league — do not spend effort hardening it unless asked.
 
-**The game.** No draft, rosters, keepers or captains. Every episode each manager fills a 5-slot card (`/picks`): Reward, Immunity, Going Home, Most Other Points, Title. The card total decides a Head-to-Head fixture (`fixtures`, keyed by round; `episodes.h2h_round` maps episode → round). The Pool runs alongside, unchanged from S50. Picks lock at `episodes.lock_at` — always read it from the table, never compute it from a weekday.
+**The game.** No draft, rosters, keepers or captains. Every episode each manager fills a 5-slot card (`/picks`): Reward, Immunity, Going Home, Most Other Points, Title. The card total decides a Head-to-Head fixture (`fixtures`, keyed by round; `episodes.h2h_round` maps episode → round). The Pool runs alongside, unchanged from S50. Picks lock at `episodes.lock_at` — always read it from the table, never compute it from a weekday. **Head-to-head fantasy ends after E12:** the finale (E13) has no card — the pick card shows only Pool + Quinfecta, and `calculate` scores no cards at the finale (it resolves the Pool and the Quinfecta).
 
 **Weekly commissioner flow** (`/admin`):
 

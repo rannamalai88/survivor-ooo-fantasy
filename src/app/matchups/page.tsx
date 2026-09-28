@@ -103,7 +103,7 @@ function MatchupsContent() {
     });
   }, [picks, isLocked]);
 
-  const playable = episodes.filter(e => e.number >= 2);
+  const playable = episodes.filter(e => e.number >= 2 && !e.is_finale);   // cards run E2–E12
   const go = (n: number) => router.replace(`/matchups?ep=${n}`);
   const idx = playable.findIndex(e => e.number === selected);
   const lockLabel = ep ? new Date(ep.lock_at).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' CT' : '';
