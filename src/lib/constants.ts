@@ -75,7 +75,9 @@ export const PICK_CHIPS: { id: PickChip; name: string; icon: string; desc: strin
 // Slot scoring values (S51 spec §2). A slot hit doubles the survivor's points.
 export const SLOT_BONUS_GOING_HOME = 5;
 export const SLOT_BONUS_TITLE = 1;
-export const PENALTY = { immunity: -5, reward: -3, mop: -3 } as const;
+// Penalties key off episodes.is_post_merge (spec v3). Reward and MOP are NEVER penalised.
+export const PENALTY_IMMUNITY_BOOTED = -5;     // Immunity pick goes home — both rulesets
+export const PENALTY_GOING_HOME_IMMUNE = -5;   // Going Home pick wins immunity — post-merge only
 
 // Chips are playable E2–E12 only, one per episode, each once per season.
 export const CHIP_FIRST_EP = 2;

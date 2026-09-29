@@ -114,6 +114,8 @@ async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: 
     const oog = (e13?.departures || []).filter(d => d.kind === 'Out of game').map(d => d.place).sort();
     check('Finale: runners-up parsed as Out of game at places 2 and 3', JSON.stringify(oog) === '[2,3]', JSON.stringify(e13?.departures));
     check('Finale: Sole Survivor is not a departure', !!e13 && !e13.departures.some(d => d.fsgId === e13.soleSurvivor?.fsgId));
+    const mergeEps = s50.filter(e => e.events.some(ev => ev.action === 'Merge')).map(e => e.episode);
+    check('Merge action detected in exactly one S50 episode', mergeEps.length === 1, JSON.stringify(mergeEps));
     check('Quit/Evac parsed with its place (S50 E1, 23rd)', !!e1?.departures.find(d => d.kind === 'Quit/Evac' && d.place === 23), JSON.stringify(e1?.departures));
     check('Triple boot parsed (S50 E6, 3 departures)', e6?.departures.length === 3, JSON.stringify(e6?.departures));
   } catch (err: any) {
@@ -153,7 +155,7 @@ async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: 
     episode: 1, outcomes: o, eventsBySurvivor,
     names: Object.fromEntries(loaded.survivors.map(s => [s.id, s.name])),
     departureKind: Object.fromEntries(e1.departures.map(d => [loaded.byFsgId.get(d.fsgId)?.id, d.kind])),
-    adjustments: {}, titleAnswerId: undefined,
+    adjustments: {}, titleAnswerId: undefined, isPostMerge: false,
   };
   const best = scoreCard({
     picks: { reward: idByName('Eric'), immunity: idByName('Rob'), going_home: idByName('Aaliyah'), mop: idByName('Kristin') },
@@ -167,6 +169,18 @@ async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: 
   }, ctx);
   const immLine = penalized.lines.find(l => l.slot === 'immunity')!;
   check('Departed Immunity pick takes −5 (Aaliyah 1 − 5 = −4)', immLine.total === -4 && immLine.penalty === -5, immLine.reason);
+
+  // Penalty rulesets (spec v3): Reward/MOP never penalised; Going Home immune only post-merge
+  const mopBoot = scoreCard({ picks: { reward: idByName('Eric'), immunity: idByName('Rob'), going_home: idByName('Lewis'), mop: idByName('Aaliyah') }, titlePickId: null, chip: null, chipSlot: null, hedgeAltId: null }, ctx);
+  const mopLine = mopBoot.lines.find(l => l.slot === 'mop')!;
+  check('MOP pick who leaves takes no penalty', mopLine.penalty === 0, mopLine.reason);
+  const ghImmune = { picks: { reward: idByName('Eric'), immunity: idByName('Kristin'), going_home: idByName('Rob'), mop: idByName('Lewis') }, titlePickId: null, chip: null, chipSlot: null, hedgeAltId: null };
+  const preLine = scoreCard(ghImmune, ctx).lines.find(l => l.slot === 'going_home')!;
+  const postLine = scoreCard(ghImmune, { ...ctx, isPostMerge: true }).lines.find(l => l.slot === 'going_home')!;
+  check('Going Home pick who wins immunity: 0 pre-merge', preLine.penalty === 0, preLine.reason);
+  check('Going Home pick who wins immunity: −5 post-merge', postLine.penalty === -5 && postLine.total === 6 - 5, postLine.reason);
+  const postImm = scoreCard({ picks: { reward: idByName('Rob'), immunity: idByName('Aaliyah'), going_home: idByName('Eric'), mop: idByName('Lewis') }, titlePickId: null, chip: null, chipSlot: null, hedgeAltId: null }, { ...ctx, isPostMerge: true }).lines.find(l => l.slot === 'immunity')!;
+  check('Immunity pick who leaves takes −5 post-merge too', postImm.penalty === -5, postImm.reason);
 
   return { success: checks.every(c => c.pass), passed: checks.filter(c => c.pass).length, total: checks.length, checks };
 }

@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     // ── 0. Season + episode ──
     const [{ data: season }, { data: epRow }] = await Promise.all([
       supabase.from('seasons').select('total_episodes').eq('id', seasonId).single(),
-      supabase.from('episodes').select('number, h2h_round, is_finale').eq('season_id', seasonId).eq('number', episode).maybeSingle(),
+      supabase.from('episodes').select('number, h2h_round, is_finale, is_post_merge').eq('season_id', seasonId).eq('number', episode).maybeSingle(),
     ]);
     const totalEpisodes = season?.total_episodes || 13;
     const isFinaleRun = epRow?.is_finale ?? episode === totalEpisodes;
@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
       departureKind: Object.fromEntries(events.filter(e => e.category === 'departure').map(e => [e.survivorId, e.action])),
       adjustments: Object.fromEntries((adjRes.data || []).map((r: any) => [r.survivor_id, r.manual_adjustment || 0])),
       titleAnswerId: netRes.data ? netRes.data.correct_survivor_id : undefined,
+      isPostMerge: !!epRow?.is_post_merge,
     };
 
     // ── 2. Score every card ──
@@ -156,7 +157,7 @@ export async function POST(request: NextRequest) {
     if (dryRun) {
       const nameOfMgr = (id: string) => managers.find(m => m.id === id)?.name ?? '?';
       return NextResponse.json({
-        success: true, dryRun: true, episode, eventsFromEpisode: eventsEpisode,
+        success: true, dryRun: true, episode, eventsFromEpisode: eventsEpisode, ruleset: epRow?.is_post_merge ? 'post-merge' : 'pre-merge',
         titleAnswerRecorded: ctx.titleAnswerId !== undefined,
         results: managers.map(m => {
           const r = results.get(m.id)!;
@@ -305,6 +306,7 @@ export async function POST(request: NextRequest) {
       episode,
       titleAnswerRecorded: ctx.titleAnswerId !== undefined,
       quinfectaScored: quinfectaReady,
+      ruleset: epRow?.is_post_merge ? 'post-merge' : 'pre-merge',
       finale: !cardsScored,
       message: cardsScored ? undefined : `Finale: Pool resolved${quinfectaReady ? ' and Quinfecta scored' : ' (Quinfecta waits for all five final places)'}. No cards are scored.`,
       results: !cardsScored ? [] : managers.map(m => {

@@ -25,8 +25,9 @@ interface PullResult {
   success: boolean; error?: string; blocking?: string[];
   actions?: number; eliminations?: { name: string; kind: string; place: number | null }[];
   tribeChanges?: string[]; unknownActions?: string[]; warnings?: string[];
-  availableEpisodes?: number[];
+  availableEpisodes?: number[]; mergeDetected?: boolean;
 }
+interface EpisodeAdminRow { number: number; air_date: string; status: string; title: string | null; title_source: string | null; title_fetched_at: string | null; is_post_merge: boolean; merge_aired: boolean }
 interface CalcResult {
   managerId?: string; name: string; submitted?: boolean; cardTotal: number; chip: string | null; chipNote: string | null;
   opponent: string | null; h2hPoints: number | null; h2hNote: string | null; shadowBeat: number;
@@ -97,7 +98,9 @@ function AdminContent() {
   const [selfTest, setSelfTest] = useState<{ success: boolean; passed: number; total: number; checks: { name: string; pass: boolean; detail?: string }[] } | null>(null);
 
   // Season tab
-  const [nextEpisodeTitle, setNextEpisodeTitle] = useState('');
+  const [episodeRows, setEpisodeRows] = useState<EpisodeAdminRow[]>([]);
+  const [titleDrafts, setTitleDrafts] = useState<Record<number, string>>({});
+  const [titleFetch, setTitleFetch] = useState<{ success: boolean; error?: string; updated?: { episode: number; title: string }[]; skipped?: string[] } | null>(null);
 
   const [tab, setTab] = useState<'results' | 'title' | 'calculate' | 'season' | 'flags' | 'tools'>('results');
 
@@ -122,7 +125,7 @@ function AdminContent() {
     try {
       setLoading(true);
       const [seasonRes, survivorsRes, managersRes] = await Promise.all([
-        supabase.from('seasons').select('current_episode, total_episodes, next_episode_title').eq('id', SEASON_ID).single(),
+        supabase.from('seasons').select('current_episode, total_episodes').eq('id', SEASON_ID).single(),
         supabase.from('survivors').select('id, name, tribe, is_active, is_playable, elimination_order, eliminated_episode, photo_url').eq('season_id', SEASON_ID).order('name'),
         supabase.from('managers').select('id, name').eq('season_id', SEASON_ID).order('name'),
       ]);
@@ -130,7 +133,7 @@ function AdminContent() {
       setCurrentEpisode(ep);
       setSelectedEpisode(ep);
       setTotalEpisodes(seasonRes.data?.total_episodes || 13);
-      setNextEpisodeTitle(seasonRes.data?.next_episode_title || '');
+      await loadEpisodeRows();
       setSurvivors(survivorsRes.data || []);
       setManagers(managersRes.data || []);
     } catch (err: any) {
@@ -146,7 +149,7 @@ function AdminContent() {
       supabase.from('episode_outcomes').select('*').eq('season_id', SEASON_ID).eq('episode', episode).maybeSingle(),
       supabase.from('net_answers').select('correct_survivor_id, episode_title').eq('season_id', SEASON_ID).eq('episode', episode).maybeSingle(),
       supabase.from('weekly_picks').select('manager_id').eq('season_id', SEASON_ID).eq('episode', episode),
-      supabase.from('episodes').select('status').eq('season_id', SEASON_ID).eq('number', episode).maybeSingle(),
+      supabase.from('episodes').select('status, title').eq('season_id', SEASON_ID).eq('number', episode).maybeSingle(),
     ]);
     const scores = scoresRes.data || [];
     setFsgScores(Object.fromEntries(scores.map((s: any) => [s.survivor_id, s.fsg_points])));
@@ -155,7 +158,7 @@ function AdminContent() {
     setHasScores(scores.length > 0);
     setOutcome(outcomeRes.data as StoredOutcome | null);
     setTitleAnswerId(netRes.data?.correct_survivor_id ?? null);
-    setTitleText(netRes.data?.episode_title ?? '');
+    setTitleText(netRes.data?.episode_title ?? epRes.data?.title ?? '');
     setTitleSaved(!!netRes.data);
     setSubmittedIds((picksRes.data || []).map((p: any) => p.manager_id));
     setEpisodeStatus(epRes.data?.status ?? null);
@@ -230,13 +233,46 @@ function AdminContent() {
   }
 
   // ---- Season ----
-  async function saveNextEpisodeTitle() {
-    setBusy('nextTitle');
-    const { error } = await supabase.from('seasons').update({ next_episode_title: nextEpisodeTitle.trim() || null }).eq('id', SEASON_ID);
-    if (error) setError(error.message);
-    else { await logActivity('admin', `Episode ${currentEpisode} title set: "${nextEpisodeTitle.trim()}"`); flash('Episode title saved.'); }
+  async function loadEpisodeRows() {
+    const { data } = await supabase.from('episodes')
+      .select('number, air_date, status, title, title_source, title_fetched_at, is_post_merge, merge_aired')
+      .eq('season_id', SEASON_ID).order('number');
+    const rows = (data || []) as EpisodeAdminRow[];
+    setEpisodeRows(rows);
+    setTitleDrafts(Object.fromEntries(rows.map(r => [r.number, r.title ?? ''])));
+  }
+
+  async function fetchTitles() {
+    setBusy('titles'); setError(null);
+    const { ok, data } = await postJSON('/api/scoring/fetch-titles', { seasonId: SEASON_ID });
+    setTitleFetch(data);
+    if (!ok) setError(data.error || 'Title fetch failed');
+    else flash(data.updated?.length ? `Fetched ${data.updated.length} title(s).` : 'No new titles yet.');
+    await loadEpisodeRows();
     setBusy(null);
   }
+
+  // Saving a title marks it commissioner-set, so the scraper never overwrites it.
+  // Saving it empty clears the override and lets the scraper refill it.
+  async function saveEpisodeTitle(n: number) {
+    const title = (titleDrafts[n] ?? '').trim();
+    setBusy(`title-${n}`);
+    const { error } = await supabase.from('episodes')
+      .update(title ? { title, title_source: 'commissioner' } : { title: null, title_source: null, title_fetched_at: null })
+      .eq('season_id', SEASON_ID).eq('number', n);
+    if (error) setError(error.message);
+    else { await logActivity('admin', title ? `Episode ${n} title set by commissioner: "${title}"` : `Episode ${n} title cleared (scraper will refill)`); flash(`Episode ${n} title saved.`); }
+    await loadEpisodeRows();
+    setBusy(null);
+  }
+
+  async function setEpisodeFlag(n: number, field: 'is_post_merge' | 'merge_aired', value: boolean) {
+    const { error } = await supabase.from('episodes').update({ [field]: value }).eq('season_id', SEASON_ID).eq('number', n);
+    if (error) setError(error.message);
+    else await logActivity('admin', `Episode ${n} ${field} set to ${value} by commissioner`);
+    await loadEpisodeRows();
+  }
+
 
   async function advanceEpisode() {
     if (currentEpisode >= totalEpisodes) return;
@@ -364,6 +400,7 @@ function AdminContent() {
                   <div>✓ {pullResult.actions} actions saved.</div>
                   {!!pullResult.eliminations?.length && <div>✓ Out of the game: {pullResult.eliminations.map(e => `${e.name} (${e.kind}${e.place ? `, ${formatRank(e.place)} place` : ''})`).join(', ')}</div>}
                   {!!pullResult.tribeChanges?.length && <div>✓ Tribe changes: {pullResult.tribeChanges.join(', ')}</div>}
+                  {pullResult.mergeDetected && <div className="text-sm text-ink font-semibold">🔀 Merge detected — every later episode now uses post-merge penalty rules (see the Advance tab).</div>}
                 </div>
               )}
             </div>
@@ -479,6 +516,7 @@ function AdminContent() {
               {!calcResult.titleAnswerRecorded && <span className="text-[10px] font-bold text-warn">Title answer not recorded</span>}
             </div>
             {calcResult.message && <p className="text-sm text-ink mb-3">{calcResult.message}</p>}
+            {(calcResult as any).ruleset && <p className="text-xs text-muted mb-3">Scored under <b className="text-ink">{(calcResult as any).ruleset}</b> penalty rules.</p>}
             <div className="overflow-x-auto rounded-lg border border-line">
               <table className="w-full text-xs border-collapse">
                 <thead>
@@ -520,11 +558,36 @@ function AdminContent() {
           <p className="text-xs text-muted">Managers are submitting picks for episode {currentEpisode}. Picks lock at that episode&apos;s lock time in the episodes table.</p>
         </Card>
         <Card className="mb-4">
-          <H2>💬 Next episode title (shown on the pick card)</H2>
-          <div className="flex gap-2">
-            <input type="text" value={nextEpisodeTitle} onChange={(e) => setNextEpisodeTitle(e.target.value)} placeholder={`Episode ${currentEpisode} title`}
-              className="flex-1 bg-raised border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-faint" />
-            <Btn onClick={saveNextEpisodeTitle} disabled={busy === 'nextTitle'}>💾 Save</Btn>
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-2">
+            <H2>🎬 Episodes — titles &amp; merge rules</H2>
+            <Btn variant="secondary" onClick={fetchTitles} disabled={busy === 'titles'}>{busy === 'titles' ? '⏳ Fetching...' : 'Fetch titles'}</Btn>
+          </div>
+          <p className="text-xs text-muted mb-3">Titles are pulled daily from CBS press releases (The Futon Critic) and shown on the pick card. Typing a title here overrides it — the scraper never touches a commissioner title; save it empty to hand it back. <b className="text-ink">Post-merge</b> switches that episode to post-merge penalty rules; the FSG pull sets it automatically on every episode after the merge.</p>
+          {titleFetch && !titleFetch.success && <IssueList title="Title fetch failed — nothing was written" items={[titleFetch.error || 'Unknown error']} tone="error" />}
+          {titleFetch?.success && !!titleFetch.skipped?.length && <IssueList title="Kept commissioner titles" items={titleFetch.skipped} tone="warn" />}
+          <div className="overflow-x-auto rounded-lg border border-line">
+            <table className="data-table">
+              <thead><tr><th>Ep</th><th>Airs</th><th>Title</th><th>Source</th><th className="text-center">Merge aired</th><th className="text-center">Post-merge</th></tr></thead>
+              <tbody>
+                {episodeRows.filter(r => r.number >= 2).map(r => (
+                  <tr key={r.number}>
+                    <td className="num font-semibold text-ink">E{r.number}</td>
+                    <td className="text-muted text-xs">{new Date(r.air_date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
+                    <td>
+                      <div className="flex gap-1.5 min-w-[220px]">
+                        <input type="text" value={titleDrafts[r.number] ?? ''} placeholder="Not announced"
+                          onChange={(e) => setTitleDrafts({ ...titleDrafts, [r.number]: e.target.value })}
+                          className="flex-1 bg-raised border border-line rounded-lg px-2 py-1 text-sm text-ink placeholder:text-faint" />
+                        {(titleDrafts[r.number] ?? '') !== (r.title ?? '') && <Button size="sm" onClick={() => saveEpisodeTitle(r.number)} disabled={busy === `title-${r.number}`}>Save</Button>}
+                      </div>
+                    </td>
+                    <td className="text-xs text-muted">{r.title_source === 'commissioner' ? 'You' : r.title_source === 'thefutoncritic' ? 'CBS' : '—'}</td>
+                    <td className="text-center"><input type="checkbox" checked={r.merge_aired} onChange={(e) => setEpisodeFlag(r.number, 'merge_aired', e.target.checked)} aria-label={`Episode ${r.number} merge aired`} /></td>
+                    <td className="text-center"><input type="checkbox" checked={r.is_post_merge} onChange={(e) => setEpisodeFlag(r.number, 'is_post_merge', e.target.checked)} aria-label={`Episode ${r.number} post-merge rules`} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
         <Card className="mb-4">

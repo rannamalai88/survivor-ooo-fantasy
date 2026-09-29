@@ -176,10 +176,25 @@ export async function POST(request: NextRequest) {
     await supabase.from('episodes').update({ status: 'aired' })
       .eq('season_id', seasonId).eq('number', episode).eq('status', 'scheduled');
 
+    // ── 6b. Merge detection (spec v3) ──
+    // FSG logs a "Merge" action in the merge episode's recap. Flag that episode
+    // merge_aired, and switch every LATER episode to post-merge rules — never the
+    // merge episode itself, whose picks locked before anyone knew. Only ever sets
+    // the flags (a commissioner override is never undone here).
+    const mergeDetected = ep.events.some(e => e.action === 'Merge');
+    if (mergeDetected) {
+      const { error: mErr } = await supabase.from('episodes').update({ merge_aired: true }).eq('season_id', seasonId).eq('number', episode);
+      if (mErr) throw mErr;
+      const { error: pErr } = await supabase.from('episodes').update({ is_post_merge: true }).eq('season_id', seasonId).gt('number', episode);
+      if (pErr) throw pErr;
+      const { data: scoredLater } = await supabase.from('episodes').select('number').eq('season_id', seasonId).gt('number', episode).eq('status', 'scored');
+      if (scoredLater?.length) warnings.push(`Merge detected in episode ${episode}, but later episode(s) ${scoredLater.map((e: any) => e.number).join(', ')} are already scored under pre-merge rules — re-run Calculate for them.`);
+    }
+
     // ── 7. Log ──
     await supabase.from('activity_log').insert({
       season_id: seasonId, type: 'admin',
-      message: `FSG pulled for episode ${episode}: ${events.filter(e => e.category !== 'departure').length} actions, ${ep.departures.length} departure(s)${warnings.length ? `, ${warnings.length} warning(s)` : ''}`,
+      message: `FSG pulled for episode ${episode}: ${events.filter(e => e.category !== 'departure').length} actions, ${ep.departures.length} departure(s)${mergeDetected ? ', MERGE detected — later episodes switched to post-merge rules' : ''}${warnings.length ? `, ${warnings.length} warning(s)` : ''}`,
       metadata: { episode, warnings, unknownActions: ep.unknownActions },
     });
 
@@ -197,6 +212,7 @@ export async function POST(request: NextRequest) {
       },
       eliminations,
       tribeChanges,
+      mergeDetected,
       scores: scoreRows.filter(r => r.fsg_points !== 0)
         .map(r => ({ name: nameOf(r.survivor_id), points: r.fsg_points, actions: (r.scored_actions as any).actions }))
         .sort((a, b) => b.points - a.points),

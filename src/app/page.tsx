@@ -115,6 +115,8 @@ function HomeContent() {
             {episode?.is_couples_week && <Badge tone="accent">💞 Couples Week</Badge>}
             {episode?.is_rivalry_week && <Badge tone="negative">⚔️ Rivalry Week</Badge>}
             {episode?.is_finale && <Badge tone="accent">🏆 Finale</Badge>}
+            {episode?.title && <span className="text-xs text-muted">&ldquo;{episode.title}&rdquo;</span>}
+            <Badge tone={episode?.is_post_merge ? 'warn' : 'neutral'} title={episode?.is_post_merge ? 'Immunity pick goes home: −5 · Going Home pick wins immunity: −5' : 'Only a wrong Immunity pick is penalised'}>{episode?.is_post_merge ? 'Post-merge rules' : 'Pre-merge rules'}</Badge>
           </div>
 
           {fixture && oppName && manager ? (

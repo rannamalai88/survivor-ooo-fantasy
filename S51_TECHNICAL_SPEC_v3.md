@@ -1,10 +1,11 @@
-# S51 TECHNICAL SPEC (v2)
+# S51 TECHNICAL SPEC (v3)
 
 Build spec for the Survivor OOO Fantasy Season 51 rebuild. Companion to `CLAUDE.md`.
 League-facing rules live in the S51 League Rules doc; this file is the implementation contract.
 
-**v2 — rewritten 2026-09-26 against the live database after introspection.**
-v1 contained five errors, one of which would have inverted the quinfecta. Trust this file.
+*v3 — updated 2026-09-29 after the league kickoff.**
+Changed since v2: penalties now split pre/post merge, and Reward and MOP penalties are
+removed entirely; episode titles auto-pulled from The Futon Critic. Migration 007 applied.
 
 **Database migration is COMPLETE.** Remaining work is application code.
 
@@ -88,7 +89,9 @@ export const H2H_ROUNDS = 11;
 
 export const SLOT_BONUS_GOING_HOME = 5;
 export const SLOT_BONUS_TITLE = 1;
-export const PENALTY = { immunity: -5, reward: -3, mop: -3 } as const;
+// Penalties key off episodes.is_post_merge. Reward and MOP are NEVER penalised.
+export const PENALTY_IMMUNITY_BOOTED   = -5; // both rulesets
+export const PENALTY_GOING_HOME_IMMUNE = -5; // post-merge only
 
 export const QUINFECTA_EXACT = 5;
 export const QUINFECTA_ADJACENT = 2;
@@ -137,7 +140,33 @@ Recaps carry summary headers (`Immunity: Savu`, `Reward: …`, `Voted Out: …`)
 
 `Surv Pts` on the stats page is cumulative — diff week-over-week and assert the diff equals the sum of parsed actions. **Ignore `Out Pts` entirely**; it is FSG's longevity currency and reintroduces the elimination bias we retired.
 
-### 3.4 Deriving `episode_outcomes`
+### 3.4 Episode titles — a SEPARATE source
+
+FSG publishes recaps only **after** an episode airs, but the Title slot needs the title
+**before** picks lock. Source is CBS's press releases, mirrored by The Futon Critic:
+
+```
+http://www.thefutoncritic.com/showatch/survivor/listings/
+```
+
+Verified 2026-09-29: the 9/30/26 row already read `Weaponized Honesty`, posted six days
+ahead. E1 reads `(#5101-120) Permanent Uncertainty`. Everything from 10/7 reads `TBA`.
+
+- Rows are `M/D/YY (Day) 8:00 PM CBS <title>`
+- **Strip any `(#NNNN-NNN) ` production-code prefix** — E1 has one, E2 does not
+- **Skip titles ending in `(R)`** — hundreds of S50-and-earlier rerun rows
+- **Skip `TBA`**
+- **Dedupe by date, preferring the non-`(R)` row** — CBS reissues press releases
+- Match on **air date** against `episodes.air_date`; never parse episode numbers
+- Write `episodes.title`, `title_source='thefutoncritic'`, `title_fetched_at`
+- **Never overwrite a commissioner-set title**: fill only when `title is null` or
+  `title_source = 'thefutoncritic'`
+- Parse failure → log loudly, write nothing; never a partial result
+
+Daily cron plus a manual button on the admin page. Fall back to the Wikipedia
+`Survivor 51` season-summary table if the markup changes.
+
+### 3.4b Deriving `episode_outcomes`
 
 ```
 reward_happened   = any event category 'reward'
@@ -168,8 +197,13 @@ Departures include quits and medevacs — S50 E1 had a vote-out and a quit in th
         mult    = hit ? 2 : 1
         if chip == 'triple_down' and chip_slot == slot and hit: mult = 3
         bonus   = (slot == 'going_home' and hit) ? 5 : 0
-        penalty = (survivor in departures and slot != 'going_home')
-                    ? PENALTY[slot] : 0
+        penalty = 0
+        if slot == 'immunity' and survivor in departures:
+            penalty = -5                     # both rulesets
+        if slot == 'going_home' and episode.is_post_merge
+               and survivor in immunity_winners:
+            penalty = -5                     # post-merge only
+        # Reward and MOP carry no penalty in either ruleset.
         total   = base * mult + bonus + penalty
         -> write score_lines row with a plain-English `reason`
    c. Title slot: +1 if title_pick_id matches net_answers.correct_survivor_id
@@ -196,6 +230,8 @@ Departures include quits and medevacs — S50 E1 had a vote-out and a quit in th
 - **No-event rule:** `reward_happened == false` → base only, no double, **no penalty**. E1 had no reward challenge; expect this to recur.
 - **MOP ties pay everyone** in the array.
 - **Penalties are uncapped.** Multi-boot weeks can stack them; S50 E6 was a triple elimination. Negative card totals are legal and the UI must render them.
+- **`is_post_merge` flips on the episode AFTER the merge airs, never during it.** Picks lock before the episode, so a manager must never be scored under a rule that was not visible at submission. The parser sets `merge_aired = true` on the episode whose recap contains the `Merge` action, then `is_post_merge = true` on every later episode. Commissioner can override both from the admin page.
+- **The pick card must state the live ruleset.** Pre-merge: only a wrong Immunity pick is penalised.
 - **Going Home pays if *any* departure matches.**
 - **Chip ordering:** Hedge → slot scoring → Triple Down → fixture resolution → Double Fixture / Point Shield.
 - **Chips are E2–E12 only**, one per episode, one use each per season. Validate on submit *and* at scoring time.
@@ -231,6 +267,8 @@ Couples standings = sum of both partners' championship points. Pot: 60 / 20 / 10
 Route: `/picks`. **The only thing that must work by 9/30 7pm CT.**
 
 - Five selectors: Reward, Immunity, Going Home, MOP, Title
+- Shows `episodes.title` above the Title slot ("This week: *Weaponized Honesty* — who says it?"); if null, say it hasn't been announced and keep the slot selectable
+- States the live penalty ruleset explicitly
 - Roster slots filter to `is_active = true AND is_playable = true`
 - Title slot includes Jeff and has no uniqueness constraint
 - **Client-side uniqueness validation** across the four roster slots, with a human error message

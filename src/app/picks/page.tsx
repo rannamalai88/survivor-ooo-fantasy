@@ -8,7 +8,7 @@ import { Page, PageSkeleton, Card, Badge, Button, Callout, EmptyState, Segmented
 import { IconCheck, IconClock, IconLock } from '@/components/ui/icons';
 import {
   SEASON_ID, ROSTER_SLOTS, PICK_CHIPS, CHIP_FIRST_EP, CHIP_LAST_EP,
-  SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, PENALTY,
+  SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, PENALTY_IMMUNITY_BOOTED, PENALTY_GOING_HOME_IMMUNE,
   type RosterSlot, type PickChip,
 } from '@/lib/constants';
 
@@ -19,10 +19,11 @@ interface Survivor {
   id: string; name: string; tribe: string; photo_url: string | null; cast_id: number;
   is_active: boolean; is_playable: boolean;
 }
-interface Season { id: string; name: string; current_episode: number; total_episodes: number; next_episode_title: string | null; }
+interface Season { id: string; name: string; current_episode: number; total_episodes: number; }
 interface EpisodeRow {
   number: number; lock_at: string; h2h_round: number | null;
   is_finale: boolean; is_couples_week: boolean; is_rivalry_week: boolean;
+  title: string | null; is_post_merge: boolean;
 }
 interface PickRow {
   id: string; episode: number;
@@ -42,12 +43,13 @@ const QUIN_PLACES = ['1st — Sole Survivor 👑', '2nd', '3rd', '4th', '5th'];
 
 const EMPTY_SLOTS: Slots = { reward: null, immunity: null, going_home: null, mop: null };
 const SLOT_LABEL: Record<RosterSlot, string> = Object.fromEntries(ROSTER_SLOTS.map(s => [s.key, s.label])) as Record<RosterSlot, string>;
-const SLOT_SCORING: Record<RosterSlot, string> = {
-  reward:     `Hit: their points ×2 · If they go home: ${PENALTY.reward}`,
-  immunity:   `Hit: their points ×2 · If they go home: ${PENALTY.immunity}`,
-  going_home: `Hit: their points ×2, plus +${SLOT_BONUS_GOING_HOME}`,
-  mop:        `Hit: their points ×2 · If they go home: ${PENALTY.mop}`,
-};
+// Per-slot scoring hint for the live penalty ruleset (spec v3: pre/post merge)
+const slotScoring = (key: RosterSlot, postMerge: boolean): string => ({
+  reward:     'Hit: their points ×2 · Never penalised',
+  immunity:   `Hit: their points ×2 · If they go home: ${PENALTY_IMMUNITY_BOOTED}`,
+  going_home: `Hit: their points ×2, plus +${SLOT_BONUS_GOING_HOME}${postMerge ? ` · If they win immunity: ${PENALTY_GOING_HOME_IMMUNE}` : ''}`,
+  mop:        'Hit: their points ×2 · Never penalised',
+})[key];
 
 function formatLock(iso: string) {
   return new Date(iso).toLocaleString('en-US', {
@@ -187,7 +189,7 @@ function PicksContent() {
     setLoadError(null);
     try {
       const { data: seasonData, error: seasonErr } = await supabase
-        .from('seasons').select('id, name, current_episode, total_episodes, next_episode_title')
+        .from('seasons').select('id, name, current_episode, total_episodes')
         .eq('id', SEASON_ID).maybeSingle();
       if (seasonErr) throw seasonErr;
       if (!seasonData) { setSeason(null); setLoading(false); return; }
@@ -195,7 +197,7 @@ function PicksContent() {
       const ep: number = seasonData.current_episode;
 
       const [epRes, survRes, picksRes, poolRes] = await Promise.all([
-        supabase.from('episodes').select('number, lock_at, h2h_round, is_finale, is_couples_week, is_rivalry_week').eq('season_id', SEASON_ID).eq('number', ep).maybeSingle(),
+        supabase.from('episodes').select('number, lock_at, h2h_round, is_finale, is_couples_week, is_rivalry_week, title, is_post_merge').eq('season_id', SEASON_ID).eq('number', ep).maybeSingle(),
         supabase.from('survivors').select('id, name, tribe, photo_url, cast_id, is_active, is_playable').eq('season_id', SEASON_ID).order('cast_id'),
         supabase.from('weekly_picks').select('*').eq('season_id', SEASON_ID).eq('manager_id', manager.id),
         supabase.from('pool_status').select('status').eq('season_id', SEASON_ID).eq('manager_id', manager.id).maybeSingle(),
@@ -433,6 +435,7 @@ function PicksContent() {
 
   const titleSurvivor = titlePick ? byId.get(titlePick) || null : null;
   const finale = !!episode?.is_finale;
+  const postMerge = !!episode?.is_post_merge;
   const requiredDone = [
     ...(finale ? [] : [...ROSTER_SLOTS.map(s => !!slots[s.key]), !!titlePick]),
     ...(poolStatus === 'active' ? [!!poolPick] : []),
@@ -490,6 +493,14 @@ function PicksContent() {
         <Callout tone="accent" className="mb-3">🏆 Head-to-head is over. Finale week is just your <b>Pool</b> pick and your <b>Quinfecta</b> — both are settled after the finale airs.</Callout>
       )}
 
+      {!finale && (
+        <Callout tone={postMerge ? 'warn' : 'accent'} className="mb-3">
+          {postMerge
+            ? <><b>Post-merge rules:</b> {PENALTY_IMMUNITY_BOOTED} if your Immunity pick goes home, and {PENALTY_GOING_HOME_IMMUNE} if your Going Home pick wins immunity. Reward and Most Other Points are never penalised.</>
+            : <><b>Pre-merge rules:</b> only a wrong Immunity pick is penalised ({PENALTY_IMMUNITY_BOOTED} if they go home). Reward, Going Home and Most Other Points carry no penalty.</>}
+        </Callout>
+      )}
+
       {/* ── ROSTER SLOTS (not in the finale) ── */}
       {!finale && ROSTER_SLOTS.map(({ key, label, icon, desc }) => {
         const id = slots[key];
@@ -500,7 +511,7 @@ function PicksContent() {
           <Section key={key} title={label} icon={icon} error={!!err || (submitAttempted && !id)}
             badge={chipHere ? `${chipHere.icon} ${chipHere.name.toUpperCase()}` : id ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'}
             badgeColor={chipHere ? '#3fc0f0' : id ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
-            <Hint>{desc} <span className="text-faint">{SLOT_SCORING[key]}</span></Hint>
+            <Hint>{desc} <span className="text-faint">{slotScoring(key, postMerge)}</span></Hint>
             <Chosen s={s} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
             {openPicker === key && !isLocked && (
               <PickerGrid options={rosterEligible} selectedId={id} onSelect={(sid) => pickSlot(key, sid)} tribes={tribes}
@@ -514,10 +525,13 @@ function PicksContent() {
       {/* ── TITLE ── */}
       {!finale && <Section title="Title" icon="💬" error={submitAttempted && !titlePick}
         badge={titlePick ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'} badgeColor={titlePick ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
-        {season.next_episode_title && (
-          <div className="mb-3 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2.5">
-            <div className="text-[11px] font-semibold text-accent mb-0.5">This week’s episode title</div>
-            <div className="text-[15px] font-semibold text-ink">&ldquo;{season.next_episode_title}&rdquo;</div>
+        {episode?.title ? (
+          <div className="mb-3 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2.5 text-[15px] text-ink">
+            This week’s episode: <b>&ldquo;{episode.title}&rdquo;</b> — who says it?
+          </div>
+        ) : (
+          <div className="mb-3 rounded-xl border border-line bg-raised/60 px-3 py-2.5 text-sm text-muted">
+            This week’s episode title hasn’t been announced yet — you can still make your pick.
           </div>
         )}
         <Hint>Who says the episode title? Anyone still in the game, or Jeff. This pick can repeat one of your roster picks. <span className="text-faint">Correct: +{SLOT_BONUS_TITLE}</span></Hint>

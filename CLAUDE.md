@@ -6,7 +6,7 @@ Guidance for Claude Code when working in this repository.
 
 A private fantasy league app for a 12-manager "Survivor OOO" group (6 couples), running alongside CBS's Survivor. Next.js 14 App Router + TypeScript + Tailwind, with Supabase (Postgres + realtime) as the only backend. Deployed on Vercel via `git push` to `main` (production: https://survivor-ooo-fantasy.vercel.app).
 
-**Season 51 is live.** `S51_TECHNICAL_SPEC_v2.md` is the implementation contract; read it before changing scoring, the parser, or the pick card. S50 rows stay in the database and must remain readable, but nothing S50-specific is written any more.
+**Season 51 is live.** `S51_TECHNICAL_SPEC_v3.md` is the implementation contract; read it before changing scoring, the parser, or the pick card. S50 rows stay in the database and must remain readable, but nothing S50-specific is written any more.
 
 ## Commands
 
@@ -21,6 +21,8 @@ There is no test suite. `npm run build` is the type check. **Don't run `npm run 
 The parser and scoring rules have a regression self-test: `GET /api/scoring/preview-fsg?selftest=1` (also a button on the admin Tools tab). It re-reads FSG live and asserts the spec §8 Episode 1 results plus unit checks on the rules. Run it after touching `fsg-parser.ts` or `scoring.ts`.
 
 Required env vars (`.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SEASON_ID`, `SUPABASE_SERVICE_ROLE_KEY`, `COMMISSIONER_PIN`.
+
+Optional: `CRON_SECRET` — if set in Vercel, the daily title cron (`vercel.json` → `GET /api/scoring/fetch-titles`) must carry it as a Bearer token.
 
 `COMMISSIONER_PIN` is server-only (no `NEXT_PUBLIC_` prefix) and is checked by `POST /api/auth/commissioner`; never inline it in client code. `NEXT_PUBLIC_*` values are baked in at build time, so changing one in Vercel needs a redeploy.
 
@@ -51,6 +53,8 @@ These are not optional; they exist because violating them has cost real debuggin
 2. **Title answer** → `override { action: 'set_net_answer' }` writes `net_answers` (Jeff selectable).
 3. **Adjustments** → `survivor_scores.manual_adjustment` (never multiplied).
 4. **Preview / Calculate** → `calculate { episode, seasonId, dryRun? }`: scores every card into `score_lines` (plain-English `reason` per line), `manager_scores`, fixtures into `h2h_results`, rebuilds `pool_status`, recomputes `manager_totals` (standings + championship points), `episodes.status = scored`. `dryRun` writes nothing. Rejects episodes with no H2H round that aren't the finale (E1 is parsed, never scored).
+**Episode titles** (needed before lock, so not from FSG): `fetch-titles` (daily Vercel cron + admin "Fetch titles" button) parses CBS listings mirrored at thefutoncritic.com (`lib/title-parser.ts`) and writes `episodes.title` matched on **air date**, only where the title is empty or `title_source = 'thefutoncritic'` — a commissioner title (`title_source = 'commissioner'`, set in the admin Episodes table) is never overwritten. Parse failure writes nothing.
+
 5. **Advance** → bumps `seasons.current_episode`. Auto-drowns active Pool managers with no pool pick for the episode just finished (only from E2 on), after a confirm dialog listing them.
 
 **Pages:** `/` home (matchday hub), `/picks`, `/matchups?ep=N` (cards appear after lock; replaces `/reveals`), `/leaderboard` (Standings: championship, H2H with luck/all-play, weekly cards, couples), `/breakdown/[managerId]/[episode]` (linked from every score), `/managers/[id]` (`/managers/me` = you; replaces `/my-team`), `/survivors` + `/survivors/[id]` (replaces `/scoreboard`), `/recap/[episode]`, `/pool`, `/chips`, `/rules`, `/dynasty`, `/admin`. `/reveals`, `/my-team`, `/scoreboard` redirect; `/draft` and `/net` are retired notice pages.
@@ -70,8 +74,10 @@ These are not optional; they exist because violating them has cost real debuggin
 
 `src/lib/scoring.ts` holds the rules as pure functions; its doc comments are the spec (mirrors spec §4). All numbers live in `src/lib/constants.ts` — `CAST_SIZE`, `PENALTY`, `PLACEMENT_CURVE`, etc. Reference them; never inline `21`, `51`, or point values. The rules page reads the same constants.
 
-- **Slot:** `base × (hit ? 2 : 1) + bonus + penalty`. Going Home hit +5. Penalty when a non-Going-Home pick leaves: Immunity −5, Reward −3, MOP −3, uncapped. Card totals may be negative.
-- **No-event rule:** no reward challenge → Reward slot scores base only, no double, no penalty. Applied the same way to Immunity (no immunity challenge) and MOP (nobody scored Other points).
+- **Slot:** `base × (hit ? 2 : 1) + bonus + penalty`. Going Home hit +5. Card totals may be negative.
+- **Penalties (spec v3), keyed on `episodes.is_post_merge`:** Immunity pick leaves the game −5 (both rulesets); post-merge only, Going Home pick wins immunity −5. **Reward and MOP are never penalised.** Uncapped on multi-boot weeks.
+- **Merge:** the FSG pull sets `merge_aired` on the episode whose recap has the `Merge` action and `is_post_merge` on every LATER episode — never the merge episode itself (picks locked before anyone knew). It only sets flags; commissioner overrides in the admin Episodes table stick. The pick card always states the live ruleset.
+- **No-event rule:** no reward challenge → Reward slot scores base only, no double. Same for Immunity (no immunity challenge — and then no Immunity penalty either), MOP (nobody scored Other points) and Going Home (nobody left).
 - **`manual_adjustment` is never multiplied** — it is its own `adjustment` score line.
 - **MOP ties pay everyone.** Going Home pays on any departure (voted out, quit/evac, out of game).
 - **Chip order:** Hedge → slot scoring → Triple Down → fixture → Double Fixture / Point Shield. E2–E12 only, one per episode, one use each per season (DB unique index + checked again at scoring time).

@@ -6,7 +6,7 @@
 import { useSeason } from '@/hooks/useSeason';
 import { Page, PageHeader } from '@/components/ui';
 import {
-  ROSTER_SLOTS, PICK_CHIPS, PENALTY, SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, H2H_POINTS,
+  ROSTER_SLOTS, PICK_CHIPS, PENALTY_IMMUNITY_BOOTED, PENALTY_GOING_HOME_IMMUNE, SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, H2H_POINTS,
   PLACEMENT_CURVE, WEIGHTS, QUINFECTA_EXACT, QUINFECTA_ADJACENT, QUINFECTA_PERFECT_BONUS,
   CHIP_FIRST_EP, CHIP_LAST_EP, CAST_SIZE, H2H_ROUNDS,
 } from '@/lib/constants';
@@ -90,12 +90,15 @@ export default function RulesPage() {
             <Row left="Slot misses" right="base only" color="rgba(255,255,255,0.8)" />
           </Box>
 
-          <p className="mt-4 mb-1.5">{b('Penalties')} — if a survivor in a non-Going-Home slot leaves the game:</p>
+          <p className="mt-4 mb-1.5">{b('Penalties')} — they change once the merge has aired:</p>
           <Box>
-            <Row left={slot('immunity').label} right={PENALTY.immunity} color="#f87171" />
-            <Row left={slot('reward').label} right={PENALTY.reward} color="#f87171" />
-            <Row left={slot('mop').label} right={PENALTY.mop} color="#f87171" />
+            <Row left={<>{b('Pre-merge')} · your Immunity pick goes home</>} right={PENALTY_IMMUNITY_BOOTED} color="#f87171" />
+            <Row left={<>{b('Post-merge')} · your Immunity pick goes home</>} right={PENALTY_IMMUNITY_BOOTED} color="#f87171" />
+            <Row left={<>{b('Post-merge')} · your Going Home pick wins immunity</>} right={PENALTY_GOING_HOME_IMMUNE} color="#f87171" />
+            <Row left="Reward and Most Other Points" right="never penalised" color="rgba(255,255,255,0.8)" />
           </Box>
+          <Rule>Why the split: pre-merge, tribe immunity covers about half the cast, so penalising a Going Home pick who &ldquo;won immunity&rdquo; would be a coin flip. Post-merge it&apos;s individual immunity and a real read.</Rule>
+          <Rule>Post-merge rules start with the episode {b('after')} the merge airs, never the merge episode itself — picks lock before it airs, so nobody is scored under a rule they couldn&apos;t see. Your pick card always says which rules are live.</Rule>
           <Rule>Penalties are uncapped — a multi-boot week can stack them. {b('Card totals can be negative.')}</Rule>
           <Rule>{b('No-event rule:')} if there was no reward challenge, the Reward slot scores base points only — no double, no penalty. The same goes for Immunity with no immunity challenge, MOP if nobody scored Other points, and Going Home if nobody leaves the game (base only, no double, no bonus).</Rule>
           <Rule>{b('Most Other Points')} counts every FSG action that isn&apos;t a reward or immunity challenge win (e.g. tree mail, finding an idol). Ties pay everyone tied.</Rule>

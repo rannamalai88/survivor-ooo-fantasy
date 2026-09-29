@@ -1,15 +1,19 @@
 // =============================================================================
 // lib/scoring.ts — S51 scoring rules (pure functions, no database access)
 // =============================================================================
-// These doc comments ARE the spec. See S51_TECHNICAL_SPEC_v2.md §4.
+// These doc comments ARE the spec. See S51_TECHNICAL_SPEC_v3.md §4.
 //
 // Per card, each of the four roster slots scores:
 //   base    = sum of the survivor's FSG action points this episode
 //   hit     = the slot's condition was met (table below)
 //   mult    = hit ? 2 : 1   (Triple Down on the chip slot: 3 when hit)
 //   bonus   = +5 when the Going Home slot hits
-//   penalty = the survivor left the game and the slot isn't Going Home:
-//             Immunity −5, Reward −3, MOP −3. Uncapped; multi-boot weeks stack.
+//   penalty = depends on the episode's ruleset (episodes.is_post_merge):
+//               both rulesets: Immunity pick leaves the game        −5
+//               post-merge:    Going Home pick wins immunity        −5
+//             Reward and MOP are NEVER penalised. Uncapped; multi-boot weeks stack.
+//             (Post-merge only because pre-merge tribe immunity covers ~half
+//             the cast — that penalty would be a coin flip.)
 //   total   = base × mult + bonus + penalty   (may be negative)
 //
 //   Slot        Hit when
@@ -19,7 +23,7 @@
 //   mop         pick has the most Other points (ties pay everyone)
 //
 // No-event rule: if no reward challenge happened, the Reward slot scores base
-// points only — no double, no penalty. The same applies to Immunity when no
+// points only — no double (and no penalty). The same applies to Immunity when no
 // immunity challenge happened, to MOP when nobody scored Other points, and to
 // Going Home when nobody left (it can't hit, so no double and no bonus).
 //
@@ -32,7 +36,7 @@
 // =============================================================================
 
 import {
-  PENALTY, SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, H2H_POINTS, PLACEMENT_CURVE,
+  PENALTY_IMMUNITY_BOOTED, PENALTY_GOING_HOME_IMMUNE, SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, H2H_POINTS, PLACEMENT_CURVE,
   QUINFECTA_EXACT, QUINFECTA_ADJACENT, QUINFECTA_PERFECT_BONUS,
   CHIP_FIRST_EP, CHIP_LAST_EP, ROSTER_SLOTS, PICK_CHIPS,
   type RosterSlot, type PickChip,
@@ -87,6 +91,7 @@ export interface ScoringContext {
   departureKind: Record<string, string>;         // survivor id → "Voted out" etc.
   adjustments: Record<string, number>;           // survivor id → manual_adjustment
   titleAnswerId: string | null | undefined;      // undefined = no answer recorded yet
+  isPostMerge: boolean;                          // episodes.is_post_merge — selects the penalty ruleset
 }
 
 export interface CardResult {
@@ -168,7 +173,11 @@ function scoreSlot(slot: RosterSlot, survivorId: string, ctx: ScoringContext, tr
 
   const multiplier = hit ? (tripleDown ? 3 : 2) : 1;
   const bonus = slot === 'going_home' && hit ? SLOT_BONUS_GOING_HOME : 0;
-  const penalty = departed && slot !== 'going_home' && happened ? PENALTY[slot] : 0;
+  // Penalties (spec v3): Immunity pick leaves → −5 (both rulesets, only if an
+  // immunity challenge happened). Post-merge: Going Home pick wins immunity → −5.
+  const immunityBooted = slot === 'immunity' && departed && happened;
+  const goingHomeImmune = slot === 'going_home' && ctx.isPostMerge && o.immunityWinners.includes(survivorId);
+  const penalty = immunityBooted ? PENALTY_IMMUNITY_BOOTED : goingHomeImmune ? PENALTY_GOING_HOME_IMMUNE : 0;
   const total = base * multiplier + bonus + penalty;
 
   const parts: string[] = [];
@@ -192,8 +201,10 @@ function scoreSlot(slot: RosterSlot, survivorId: string, ctx: ScoringContext, tr
     else parts.push(`${name} had ${mine} Other point${mine === 1 ? '' : 's'}; the most was ${max} (${o.mopWinners.map(id => ctx.names[id] || '?').join(', ')}). ${pts(base)}, not doubled.`);
   }
   if (tripleDown && !hit) parts.push('Triple Down did not trigger because the slot missed.');
-  if (penalty) parts.push(`${name} left the game, so ${penalty} penalty for losing your ${SLOT_LABEL[slot]} pick.`);
-  if (departed && slot !== 'going_home' && !happened) parts.push(`${name} left the game, but there's no penalty because the event didn't happen.`);
+  if (immunityBooted) parts.push(`${name} left the game, so ${penalty} penalty for losing your Immunity pick.`);
+  if (goingHomeImmune) parts.push(`${name} won immunity, so ${penalty} penalty — post-merge, a Going Home pick who wins immunity is penalised.`);
+  if (slot === 'immunity' && departed && !happened) parts.push(`${name} left the game, but there's no penalty because there was no immunity challenge.`);
+  if ((slot === 'reward' || slot === 'mop') && departed) parts.push(`${name} left the game — ${SLOT_LABEL[slot]} picks are never penalised.`);
   parts.push(`Slot total: ${total}.`);
 
   return { slot, survivorId, basePoints: base, multiplier, bonus, penalty, total, reason: parts.join(' ') };
