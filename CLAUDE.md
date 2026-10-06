@@ -74,10 +74,12 @@ These are not optional; they exist because violating them has cost real debuggin
 
 `src/lib/scoring.ts` holds the rules as pure functions; its doc comments are the spec (mirrors spec §4). All numbers live in `src/lib/constants.ts` — `CAST_SIZE`, `PENALTY`, `PLACEMENT_CURVE`, etc. Reference them; never inline `21`, `51`, or point values. The rules page reads the same constants.
 
+- **Rules versions — permanent invariant.** Every episode is scored under `episodes.rules_version` (`RULES_VERSIONS` in `constants.ts`; spec §4.5). A rule change adds a **new** version and sets it on the episode rows it applies to; an existing version's logic and reason wording are **never edited**, so re-running any past episode reproduces its original result. Never branch on episode number or date, never hardcode the episode a version starts at. `calculate` refuses (writes nothing) if `rules_version` is missing or unknown.
 - **Slot:** `base × (hit ? 2 : 1) + bonus + penalty`. Going Home hit +5. Card totals may be negative.
+- **Going Home by version:** v1 (E1–E2) a miss scores base. v2 (E3 on) it's all-or-nothing — a miss, or nobody leaving, scores 0 (stored as `multiplier = 0`); the post-merge immunity penalty still applies (0 − 5 = −5). Triple Down hit = base × 3 + 5 and Hedge (better of the two) are unchanged.
 - **Penalties (spec v3), keyed on `episodes.is_post_merge`:** Immunity pick leaves the game −5 (both rulesets); post-merge only, Going Home pick wins immunity −5. **Reward and MOP are never penalised.** Uncapped on multi-boot weeks.
 - **Merge:** the FSG pull sets `merge_aired` on the episode whose recap has the `Merge` action and `is_post_merge` on every LATER episode — never the merge episode itself (picks locked before anyone knew). It only sets flags; commissioner overrides in the admin Episodes table stick. The pick card always states the live ruleset.
-- **No-event rule:** no reward challenge → Reward slot scores base only, no double. Same for Immunity (no immunity challenge — and then no Immunity penalty either), MOP (nobody scored Other points) and Going Home (nobody left).
+- **No-event rule:** no reward challenge → Reward slot scores base only, no double. Same for Immunity (no immunity challenge — and then no Immunity penalty either) and MOP (nobody scored Other points). Nobody left → Going Home scores base under v1, 0 under v2.
 - **`manual_adjustment` is never multiplied** — it is its own `adjustment` score line.
 - **MOP ties pay everyone.** Going Home pays on any departure (voted out, quit/evac, out of game).
 - **Chip order:** Hedge → slot scoring → Triple Down → fixture → Double Fixture / Point Shield. E2–E12 only, one per episode, one use each per season (DB unique index + checked again at scoring time).
@@ -103,7 +105,7 @@ Rules:
 
 ## Database
 
-Run migrations by hand in the Supabase SQL editor. There is no migration tooling. The checked-in `001` schema is stale; S51 tables and columns are in `002`–`005`. S51 derived tables: `episode_events`, `episode_outcomes`, `score_lines`, `h2h_results`; scoring columns on `manager_scores` / `manager_totals`. Retired S50 columns (captain, swaps, `chip_played`, `net_pick_id`, `grand_total`, …) are kept for history and not written, except `fantasy_points`, `grand_total` and `pool_score`, which `calculate` still fills for continuity.
+Run migrations by hand in the Supabase SQL editor. There is no migration tooling. The checked-in `001` schema is stale; S51 tables and columns are in `002`–`005`; `007` adds titles and merge flags; `008` adds `episodes.rules_version` (E1–E2 = 1, E3–E13 = 2). S51 derived tables: `episode_events`, `episode_outcomes`, `score_lines`, `h2h_results`; scoring columns on `manager_scores` / `manager_totals`. Retired S50 columns (captain, swaps, `chip_played`, `net_pick_id`, `grand_total`, …) are kept for history and not written, except `fantasy_points`, `grand_total` and `pool_score`, which `calculate` still fills for continuity.
 
 `survivors.tribe` has a CHECK constraint (`Vatu, Kalo, Cila, Savu, Toka, Merge, Host`). If FSG names the merged tribe something else, scrape warns; extend the constraint, then re-pull.
 

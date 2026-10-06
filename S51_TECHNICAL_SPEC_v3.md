@@ -3,9 +3,11 @@
 Build spec for the Survivor OOO Fantasy Season 51 rebuild. Companion to `CLAUDE.md`.
 League-facing rules live in the S51 League Rules doc; this file is the implementation contract.
 
-*v3 — updated 2026-09-29 after the league kickoff.**
+*v3 — updated 2026-09-29 after the league kickoff; rules versions added 2026-10-06.**
 Changed since v2: penalties now split pre/post merge, and Reward and MOP penalties are
 removed entirely; episode titles auto-pulled from The Futon Critic. Migration 007 applied.
+2026-10-06: `episodes.rules_version` (migration 008) — Going Home is all-or-nothing from
+rules v2 (E3 on); E1–E2 stay on v1. See §4.5.
 
 **Database migration is COMPLETE.** Remaining work is application code.
 
@@ -196,6 +198,7 @@ Departures include quits and medevacs — S50 E1 had a vote-out and a quit in th
         hit     = slot condition satisfied (see below)
         mult    = hit ? 2 : 1
         if chip == 'triple_down' and chip_slot == slot and hit: mult = 3
+        if slot == 'going_home' and not hit and rules_version >= 2: mult = 0   # §4.5
         bonus   = (slot == 'going_home' and hit) ? 5 : 0
         penalty = 0
         if slot == 'immunity' and survivor in departures:
@@ -224,10 +227,12 @@ Departures include quits and medevacs — S50 E1 had a vote-out and a quit in th
 | going_home | pick ∈ `departures` |
 | mop | pick ∈ `mop_winners` |
 
+A Going Home miss scores base under rules v1 and **0** under rules v2 — see §4.5.
+
 ### 4.1 Invariants
 
 - **`manual_adjustment` is never multiplied.** Carried from S50.
-- **No-event rule:** `reward_happened == false` → base only, no double, **no penalty**. E1 had no reward challenge; expect this to recur.
+- **No-event rule:** `reward_happened == false` → base only, no double, **no penalty**. E1 had no reward challenge; expect this to recur. Nobody leaving → Going Home scores base under v1, **0 under v2**.
 - **MOP ties pay everyone** in the array.
 - **Penalties are uncapped.** Multi-boot weeks can stack them; S50 E6 was a triple elimination. Negative card totals are legal and the UI must render them.
 - **`is_post_merge` flips on the episode AFTER the merge airs, never during it.** Picks lock before the episode, so a manager must never be scored under a rule that was not visible at submission. The parser sets `merge_aired = true` on the episode whose recap contains the `Merge` action, then `is_post_merge = true` on every later episode. Commissioner can override both from the admin page.
@@ -259,6 +264,40 @@ Max 35. Finale placements come from the recap's `Sole survivor (1st place)` / `O
 Rank each game independently → map to `PLACEMENT_CURVE` → multiply by weight → sum. Ties split the pooled points evenly. Max 66 (Fantasy 36, Pool 18, Quinfecta 12).
 
 Couples standings = sum of both partners' championship points. Pot: 60 / 20 / 10 / 10.
+
+### 4.5 Rules versions
+
+`episodes.rules_version` (int, migration 008) says which rules an episode is scored under.
+`calculate` reads it for the episode being scored and **refuses to run** (writing nothing) if
+it is missing or unknown — never default it. Versions live in `RULES_VERSIONS` in
+`constants.ts`; `scoreSlot` in `scoring.ts` branches on them.
+
+**Permanent invariant: a rule change adds a NEW rules version. An existing version's logic and
+reason wording are never edited**, so re-running any past episode reproduces its original
+result exactly. Never branch on episode number or air date, and never hardcode the episode a
+version starts at — set `rules_version` on the episode rows instead.
+
+| Version | Episodes | Going Home hit | Going Home miss | Nobody leaves |
+|---|---|---|---|---|
+| 1 | E1–E2 | base × 2 + 5 | base | base |
+| 2 | E3–E13 | base × 2 + 5 | **0** | **0** for every manager |
+
+Why v2: a wrong Going Home pick still scored the survivor's base points, so pre-merge the slot
+ran backwards — in E1, correctly calling Aaliyah paid 7 while wrongly calling Rob (whose tribe
+won immunity) paid 6. The slot was acting as a fifth scoring slot.
+
+Unchanged in v2: Triple Down hit = base × 3 + 5; Hedge counts whichever pick scores better, so it
+hits if either pick departed (and scores 0 if neither did); multi-boot weeks hit on any
+departure; the post-merge Going Home immunity penalty still applies (0 − 5 = −5). Reward,
+Immunity, MOP and Title are identical in both versions.
+
+A v2 miss is stored as `multiplier = 0` so `base × multiplier + bonus + penalty = total` still
+holds, with a reason such as *"Going Home is all-or-nothing: Rob did not leave — 0."* The
+breakdown shows the version an episode was scored under; the pick card shows the episode's
+Going Home rule.
+
+Regression: the self-test scores E1's Going Home picks under both versions — Aaliyah 7/7,
+Rob 6/0, Mike 1/0 — plus v2 nobody-leaves, post-merge, Triple Down and Hedge cases.
 
 ---
 

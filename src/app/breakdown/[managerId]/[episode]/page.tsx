@@ -15,7 +15,7 @@ import { useParams, useRouter } from 'next/navigation';
 import AuthGuard from '@/components/auth/AuthGuard';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase/client';
-import { SEASON_ID, SEASON_NUMBER, ROSTER_SLOTS, PICK_CHIPS } from '@/lib/constants';
+import { SEASON_ID, SEASON_NUMBER, ROSTER_SLOTS, PICK_CHIPS, RULES_VERSIONS, isRulesVersion } from '@/lib/constants';
 import { Page, PageSkeleton, Card, Badge, Button, Callout, EmptyState, ResultPill, SurvivorAvatar, TribeTag, cn } from '@/components/ui';
 import { IconChevronLeft, IconChevronRight, IconExternal, IconFlag } from '@/components/ui/icons';
 
@@ -24,6 +24,7 @@ interface Survivor { id: string; name: string; tribe: string; photo_url: string 
 interface Event { survivor_id: string; action: string; points: number; category: string }
 interface ScoreRow { card_total: number | null; chip: string | null; chip_slot: string | null; h2h_points: number | null; shadow_beat: number | null }
 interface Fixture { id: string; manager_a: string; manager_b: string }
+interface EpisodeRules { h2h_round: number | null; rules_version: number; is_post_merge: boolean }
 interface H2H { fixture_id: string; score_a: number; score_b: number; points_a: number; points_b: number; chip_a: string | null; chip_b: string | null }
 
 const SLOT_META: Record<string, { label: string; icon: string; rule: string }> = {
@@ -49,6 +50,7 @@ function BreakdownContent() {
   const [fixture, setFixture] = useState<Fixture | null>(null);
   const [h2h, setH2h] = useState<H2H | null>(null);
   const [scoredEpisodes, setScoredEpisodes] = useState<number[]>([]);
+  const [epRules, setEpRules] = useState<EpisodeRules | null>(null);
   const [flagOpen, setFlagOpen] = useState(false);
   const [flagText, setFlagText] = useState('');
   const [flagSent, setFlagSent] = useState(false);
@@ -62,7 +64,7 @@ function BreakdownContent() {
       supabase.from('survivors').select('id, name, tribe, photo_url').eq('season_id', SEASON_ID),
       supabase.from('episode_events').select('survivor_id, action, points, category').eq('season_id', SEASON_ID).eq('episode', episode),
       supabase.from('manager_scores').select('card_total, chip, chip_slot, h2h_points, shadow_beat').eq('season_id', SEASON_ID).eq('episode', episode).eq('manager_id', managerId).maybeSingle(),
-      supabase.from('episodes').select('h2h_round').eq('season_id', SEASON_ID).eq('number', episode).maybeSingle(),
+      supabase.from('episodes').select('h2h_round, rules_version, is_post_merge').eq('season_id', SEASON_ID).eq('number', episode).maybeSingle(),
       supabase.from('episodes').select('number').eq('season_id', SEASON_ID).eq('status', 'scored').order('number'),
     ]);
     setLines((linesRes.data || []) as Line[]);
@@ -70,6 +72,7 @@ function BreakdownContent() {
     setEvents((eventsRes.data || []) as Event[]);
     setScore(scoreRes.data as ScoreRow | null);
     setScoredEpisodes((scoredRes.data || []).map((r: any) => r.number));
+    setEpRules(epRes.data as EpisodeRules | null);
 
     setFixture(null); setH2h(null);
     if (epRes.data?.h2h_round) {
@@ -96,6 +99,11 @@ function BreakdownContent() {
   const sorted = [...lines].sort((a, b) => order.indexOf(a.slot) - order.indexOf(b.slot));
 
   const chipDef = score?.chip ? PICK_CHIPS.find(c => c.id === score.chip) : null;
+
+  // The ruleset this episode was scored under. Existing rules versions are never
+  // edited (spec §4.5), so the episode's version describes its stored lines.
+  const rules = epRules && isRulesVersion(epRules.rules_version) ? RULES_VERSIONS[epRules.rules_version] : null;
+  const ruleFor = (slot: string, base: string) => slot === 'going_home' && rules ? `${base} ${rules.goingHomeRule}` : base;
 
   // Fixture from this manager's perspective
   const iAmA = fixture?.manager_a === managerId;
@@ -168,6 +176,13 @@ function BreakdownContent() {
           </Card>
         </div>
 
+        {epRules && (
+          <div className="text-xs text-muted mb-3">
+            Scored under <b className="text-ink">{rules?.label ?? `Rules v${epRules.rules_version}`}</b> · {epRules.is_post_merge ? 'post-merge' : 'pre-merge'} penalties ·{' '}
+            <Link href="/rules" className="text-accent font-medium">How scoring works</Link>
+          </div>
+        )}
+
         {/* Lines */}
         <div className="space-y-3">
           {sorted.map(line => {
@@ -220,7 +235,7 @@ function BreakdownContent() {
                     <span className={cn('rounded-lg px-2 py-1 font-bold', line.total < 0 ? 'bg-negative/15 text-negative' : 'bg-accent/10 text-ink')}>{line.total}</span>
                   </div>
                 </>)}
-                {meta.rule && <div className="text-xs text-muted mt-3">Rule: {meta.rule}</div>}
+                {meta.rule && <div className="text-xs text-muted mt-3">Rule: {ruleFor(line.slot, meta.rule)}</div>}
               </Card>
             );
           })}

@@ -16,6 +16,15 @@
 //             the cast — that penalty would be a coin flip.)
 //   total   = base × mult + bonus + penalty   (may be negative)
 //
+// Rules versions (episodes.rules_version, RULES_VERSIONS in constants). Each
+// episode is scored under its own version. A rule change adds a NEW version;
+// an existing version's logic and wording are never edited, so re-running a
+// past episode reproduces its original result. Never branch on episode number.
+//   v1  Going Home miss scores base (mult 1); nobody leaving scores base.
+//   v2  Going Home is all-or-nothing: miss or nobody leaving → mult 0, so the
+//       slot scores 0 (plus any post-merge penalty, e.g. 0 − 5 = −5).
+//   Hit is base × 2 (× 3 Triple Down) + 5 in both. Nothing else differs.
+//
 //   Slot        Hit when
 //   reward      a reward challenge happened AND pick won one
 //   immunity    an immunity challenge happened AND pick won one
@@ -24,8 +33,8 @@
 //
 // No-event rule: if no reward challenge happened, the Reward slot scores base
 // points only — no double (and no penalty). The same applies to Immunity when no
-// immunity challenge happened, to MOP when nobody scored Other points, and to
-// Going Home when nobody left (it can't hit, so no double and no bonus).
+// immunity challenge happened and to MOP when nobody scored Other points. When
+// nobody left, Going Home can't hit: base only under v1, 0 under v2.
 //
 // Title slot: +1 if the pick said the episode title. Never multiplied.
 // manual_adjustment on a picked survivor passes through UNMULTIPLIED as its
@@ -38,8 +47,8 @@
 import {
   PENALTY_IMMUNITY_BOOTED, PENALTY_GOING_HOME_IMMUNE, SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, H2H_POINTS, PLACEMENT_CURVE,
   QUINFECTA_EXACT, QUINFECTA_ADJACENT, QUINFECTA_PERFECT_BONUS,
-  CHIP_FIRST_EP, CHIP_LAST_EP, ROSTER_SLOTS, PICK_CHIPS,
-  type RosterSlot, type PickChip,
+  CHIP_FIRST_EP, CHIP_LAST_EP, ROSTER_SLOTS, PICK_CHIPS, RULES_VERSIONS,
+  type RosterSlot, type PickChip, type RulesVersion,
 } from './constants';
 import type { EventCategory } from './fsg-parser';
 
@@ -92,6 +101,7 @@ export interface ScoringContext {
   adjustments: Record<string, number>;           // survivor id → manual_adjustment
   titleAnswerId: string | null | undefined;      // undefined = no answer recorded yet
   isPostMerge: boolean;                          // episodes.is_post_merge — selects the penalty ruleset
+  rulesVersion: RulesVersion;                    // episodes.rules_version — see RULES_VERSIONS
 }
 
 export interface CardResult {
@@ -171,7 +181,9 @@ function scoreSlot(slot: RosterSlot, survivorId: string, ctx: ScoringContext, tr
     : slot === 'going_home' ? departed
     : o.mopWinners.includes(survivorId);
 
-  const multiplier = hit ? (tripleDown ? 3 : 2) : 1;
+  // v2+: a Going Home miss (including nobody leaving) scores ×0 — all-or-nothing.
+  const allOrNothing = slot === 'going_home' && RULES_VERSIONS[ctx.rulesVersion].goingHomeMiss === 'zero';
+  const multiplier = hit ? (tripleDown ? 3 : 2) : allOrNothing ? 0 : 1;
   const bonus = slot === 'going_home' && hit ? SLOT_BONUS_GOING_HOME : 0;
   // Penalties (spec v3): Immunity pick leaves → −5 (both rulesets, only if an
   // immunity challenge happened). Post-merge: Going Home pick wins immunity → −5.
@@ -190,6 +202,8 @@ function scoreSlot(slot: RosterSlot, survivorId: string, ctx: ScoringContext, tr
     else parts.push(`${name} didn't win ${kind}. ${pts(base)}, not doubled.`);
   } else if (slot === 'going_home') {
     if (hit) parts.push(`${name} left the game (${ctx.departureKind[survivorId] || 'departed'}). Slot hit: ${doubled}, plus ${signed(SLOT_BONUS_GOING_HOME)} Going Home bonus.`);
+    else if (allOrNothing && o.departures.length === 0) parts.push(`Nobody left the game this episode. Going Home is all-or-nothing — 0.`);
+    else if (allOrNothing) parts.push(`Going Home is all-or-nothing: ${name} did not leave — 0.`);
     else if (o.departures.length === 0) parts.push(`Nobody left the game this episode, so ${name} scores base points only: ${pts(base)}.`);
     else parts.push(`${name} stayed in the game. ${pts(base)}, not doubled.`);
   } else {

@@ -79,6 +79,19 @@ export const SLOT_BONUS_TITLE = 1;
 export const PENALTY_IMMUNITY_BOOTED = -5;     // Immunity pick goes home — both rulesets
 export const PENALTY_GOING_HOME_IMMUNE = -5;   // Going Home pick wins immunity — post-merge only
 
+// Rules versions (spec §4.5). Every episode row carries episodes.rules_version and
+// is scored under that version's rules. A rule change adds a NEW version; an
+// existing version's behaviour is never edited, so re-running any past episode
+// reproduces its original result. Never branch on episode number or date.
+//   goingHomeMiss 'base' — a wrong Going Home pick (or nobody leaving) scores base points
+//   goingHomeMiss 'zero' — Going Home is all-or-nothing: miss or nobody leaving = 0
+export type RulesVersion = 1 | 2;
+export const RULES_VERSIONS: Record<RulesVersion, { label: string; goingHomeMiss: 'base' | 'zero'; goingHomeRule: string }> = {
+  1: { label: 'Rules v1', goingHomeMiss: 'base', goingHomeRule: `Hit: their points ×2, plus +${SLOT_BONUS_GOING_HOME}. Miss: their points, not doubled.` },
+  2: { label: 'Rules v2', goingHomeMiss: 'zero', goingHomeRule: `All-or-nothing: right pays double + ${SLOT_BONUS_GOING_HOME}, wrong pays 0.` },
+};
+export const isRulesVersion = (v: unknown): v is RulesVersion => typeof v === 'number' && v in RULES_VERSIONS;
+
 // Chips are playable E2–E12 only, one per episode, each once per season.
 export const CHIP_FIRST_EP = 2;
 export const CHIP_LAST_EP = 12;

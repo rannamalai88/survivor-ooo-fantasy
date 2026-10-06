@@ -516,7 +516,7 @@ function AdminContent() {
               {!calcResult.titleAnswerRecorded && <span className="text-[10px] font-bold text-warn">Title answer not recorded</span>}
             </div>
             {calcResult.message && <p className="text-sm text-ink mb-3">{calcResult.message}</p>}
-            {(calcResult as any).ruleset && <p className="text-xs text-muted mb-3">Scored under <b className="text-ink">{(calcResult as any).ruleset}</b> penalty rules.</p>}
+            {(calcResult as any).ruleset && <p className="text-xs text-muted mb-3">Scored under <b className="text-ink">{(calcResult as any).rulesVersion ? `Rules v${(calcResult as any).rulesVersion} · ` : ''}{(calcResult as any).ruleset}</b> penalty rules.</p>}
             <div className="overflow-x-auto rounded-lg border border-line">
               <table className="w-full text-xs border-collapse">
                 <thead>

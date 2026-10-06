@@ -20,7 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/server';
-import { WEIGHTS, placeFromEliminationOrder, CAST_SIZE, type RosterSlot, type PickChip } from '@/lib/constants';
+import { WEIGHTS, placeFromEliminationOrder, CAST_SIZE, RULES_VERSIONS, isRulesVersion, type RosterSlot, type PickChip } from '@/lib/constants';
 import {
   deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta,
   type EpisodeEvent, type ScoringContext, type CardInput, type CardResult,
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     // ── 0. Season + episode ──
     const [{ data: season }, { data: epRow }] = await Promise.all([
       supabase.from('seasons').select('total_episodes').eq('id', seasonId).single(),
-      supabase.from('episodes').select('number, h2h_round, is_finale, is_post_merge').eq('season_id', seasonId).eq('number', episode).maybeSingle(),
+      supabase.from('episodes').select('number, h2h_round, is_finale, is_post_merge, rules_version').eq('season_id', seasonId).eq('number', episode).maybeSingle(),
     ]);
     const totalEpisodes = season?.total_episodes || 13;
     const isFinaleRun = epRow?.is_finale ?? episode === totalEpisodes;
@@ -47,6 +47,12 @@ export async function POST(request: NextRequest) {
     const cardsScored = !isFinaleRun;
     if (!dryRun && !epRow?.h2h_round && !isFinaleRun) {
       return NextResponse.json({ error: `Episode ${episode} has no H2H round and isn't the finale, so it isn't scored (E1 is parsed but never scored).` }, { status: 400 });
+    }
+    // Each episode is scored under its own rules version. Never default it — a
+    // silent fallback would score a new episode under old rules.
+    const rulesVersion = epRow?.rules_version;
+    if (!isRulesVersion(rulesVersion)) {
+      return NextResponse.json({ error: `Episode ${episode} has rules_version ${rulesVersion ?? 'missing'}, which isn't a known rules version (${Object.keys(RULES_VERSIONS).join(', ')}). Nothing was written.` }, { status: 400 });
     }
     const eventsEpisode = dryRun && eventsFromEpisode ? Number(eventsFromEpisode) : episode;
 
@@ -86,6 +92,7 @@ export async function POST(request: NextRequest) {
       adjustments: Object.fromEntries((adjRes.data || []).map((r: any) => [r.survivor_id, r.manual_adjustment || 0])),
       titleAnswerId: netRes.data ? netRes.data.correct_survivor_id : undefined,
       isPostMerge: !!epRow?.is_post_merge,
+      rulesVersion,
     };
 
     // ── 2. Score every card ──
@@ -157,7 +164,7 @@ export async function POST(request: NextRequest) {
     if (dryRun) {
       const nameOfMgr = (id: string) => managers.find(m => m.id === id)?.name ?? '?';
       return NextResponse.json({
-        success: true, dryRun: true, episode, eventsFromEpisode: eventsEpisode, ruleset: epRow?.is_post_merge ? 'post-merge' : 'pre-merge',
+        success: true, dryRun: true, episode, eventsFromEpisode: eventsEpisode, ruleset: epRow?.is_post_merge ? 'post-merge' : 'pre-merge', rulesVersion,
         titleAnswerRecorded: ctx.titleAnswerId !== undefined,
         results: managers.map(m => {
           const r = results.get(m.id)!;
@@ -306,7 +313,7 @@ export async function POST(request: NextRequest) {
       episode,
       titleAnswerRecorded: ctx.titleAnswerId !== undefined,
       quinfectaScored: quinfectaReady,
-      ruleset: epRow?.is_post_merge ? 'post-merge' : 'pre-merge',
+      ruleset: epRow?.is_post_merge ? 'post-merge' : 'pre-merge', rulesVersion,
       finale: !cardsScored,
       message: cardsScored ? undefined : `Finale: Pool resolved${quinfectaReady ? ' and Quinfecta scored' : ' (Quinfecta waits for all five final places)'}. No cards are scored.`,
       results: !cardsScored ? [] : managers.map(m => {

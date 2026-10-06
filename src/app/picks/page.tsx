@@ -9,6 +9,7 @@ import { IconCheck, IconClock, IconLock } from '@/components/ui/icons';
 import {
   SEASON_ID, ROSTER_SLOTS, PICK_CHIPS, CHIP_FIRST_EP, CHIP_LAST_EP,
   SLOT_BONUS_GOING_HOME, SLOT_BONUS_TITLE, PENALTY_IMMUNITY_BOOTED, PENALTY_GOING_HOME_IMMUNE,
+  RULES_VERSIONS, isRulesVersion,
   type RosterSlot, type PickChip,
 } from '@/lib/constants';
 
@@ -23,7 +24,7 @@ interface Season { id: string; name: string; current_episode: number; total_epis
 interface EpisodeRow {
   number: number; lock_at: string; h2h_round: number | null;
   is_finale: boolean; is_couples_week: boolean; is_rivalry_week: boolean;
-  title: string | null; is_post_merge: boolean;
+  title: string | null; is_post_merge: boolean; rules_version: number;
 }
 interface PickRow {
   id: string; episode: number;
@@ -44,10 +45,11 @@ const QUIN_PLACES = ['1st — Sole Survivor 👑', '2nd', '3rd', '4th', '5th'];
 const EMPTY_SLOTS: Slots = { reward: null, immunity: null, going_home: null, mop: null };
 const SLOT_LABEL: Record<RosterSlot, string> = Object.fromEntries(ROSTER_SLOTS.map(s => [s.key, s.label])) as Record<RosterSlot, string>;
 // Per-slot scoring hint for the live penalty ruleset (spec v3: pre/post merge)
-const slotScoring = (key: RosterSlot, postMerge: boolean): string => ({
+// and the episode's rules version (Going Home all-or-nothing from v2)
+const slotScoring = (key: RosterSlot, postMerge: boolean, rulesVersion: number | undefined): string => ({
   reward:     'Hit: their points ×2 · Never penalised',
   immunity:   `Hit: their points ×2 · If they go home: ${PENALTY_IMMUNITY_BOOTED}`,
-  going_home: `Hit: their points ×2, plus +${SLOT_BONUS_GOING_HOME}${postMerge ? ` · If they win immunity: ${PENALTY_GOING_HOME_IMMUNE}` : ''}`,
+  going_home: `${isRulesVersion(rulesVersion) ? RULES_VERSIONS[rulesVersion].goingHomeRule : `Hit: their points ×2, plus +${SLOT_BONUS_GOING_HOME}`}${postMerge ? ` · If they win immunity: ${PENALTY_GOING_HOME_IMMUNE}` : ''}`,
   mop:        'Hit: their points ×2 · Never penalised',
 })[key];
 
@@ -197,7 +199,7 @@ function PicksContent() {
       const ep: number = seasonData.current_episode;
 
       const [epRes, survRes, picksRes, poolRes] = await Promise.all([
-        supabase.from('episodes').select('number, lock_at, h2h_round, is_finale, is_couples_week, is_rivalry_week, title, is_post_merge').eq('season_id', SEASON_ID).eq('number', ep).maybeSingle(),
+        supabase.from('episodes').select('number, lock_at, h2h_round, is_finale, is_couples_week, is_rivalry_week, title, is_post_merge, rules_version').eq('season_id', SEASON_ID).eq('number', ep).maybeSingle(),
         supabase.from('survivors').select('id, name, tribe, photo_url, cast_id, is_active, is_playable').eq('season_id', SEASON_ID).order('cast_id'),
         supabase.from('weekly_picks').select('*').eq('season_id', SEASON_ID).eq('manager_id', manager.id),
         supabase.from('pool_status').select('status').eq('season_id', SEASON_ID).eq('manager_id', manager.id).maybeSingle(),
@@ -511,7 +513,7 @@ function PicksContent() {
           <Section key={key} title={label} icon={icon} error={!!err || (submitAttempted && !id)}
             badge={chipHere ? `${chipHere.icon} ${chipHere.name.toUpperCase()}` : id ? 'PICKED' : isLocked ? 'NO PICK' : 'REQUIRED'}
             badgeColor={chipHere ? '#3fc0f0' : id ? '#4ade80' : isLocked ? '#9aa0a8' : '#FF6B35'}>
-            <Hint>{desc} <span className="text-faint">{slotScoring(key, postMerge)}</span></Hint>
+            <Hint>{desc} <span className="text-faint">{slotScoring(key, postMerge, episode?.rules_version)}</span></Hint>
             <Chosen s={s} placeholder="Choose a survivor" open={openPicker === key} onOpen={() => togglePicker(key)} locked={isLocked} />
             {openPicker === key && !isLocked && (
               <PickerGrid options={rosterEligible} selectedId={id} onSelect={(sid) => pickSlot(key, sid)} tribes={tribes}

@@ -13,7 +13,7 @@ import { SEASON_ID, eliminationOrderFromPlace, placeFromEliminationOrder } from 
 import { loadFSG, summaryIssues, toEpisodeEvents } from '@/lib/fsg-load';
 import { fetchFSGRecapPage, parseRecap } from '@/lib/fsg-parser';
 import { walkPool } from '@/lib/pool';
-import { deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta, type ScoringContext, type EpisodeEvent } from '@/lib/scoring';
+import { deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta, type ScoringContext, type EpisodeEvent, type CardInput } from '@/lib/scoring';
 
 export const dynamic = 'force-dynamic';
 
@@ -155,7 +155,7 @@ async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: 
     episode: 1, outcomes: o, eventsBySurvivor,
     names: Object.fromEntries(loaded.survivors.map(s => [s.id, s.name])),
     departureKind: Object.fromEntries(e1.departures.map(d => [loaded.byFsgId.get(d.fsgId)?.id, d.kind])),
-    adjustments: {}, titleAnswerId: undefined, isPostMerge: false,
+    adjustments: {}, titleAnswerId: undefined, isPostMerge: false, rulesVersion: 1,
   };
   const best = scoreCard({
     picks: { reward: idByName('Eric'), immunity: idByName('Rob'), going_home: idByName('Aaliyah'), mop: idByName('Kristin') },
@@ -181,6 +181,26 @@ async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: 
   check('Going Home pick who wins immunity: −5 post-merge', postLine.penalty === -5 && postLine.total === 6 - 5, postLine.reason);
   const postImm = scoreCard({ picks: { reward: idByName('Rob'), immunity: idByName('Aaliyah'), going_home: idByName('Eric'), mop: idByName('Lewis') }, titlePickId: null, chip: null, chipSlot: null, hedgeAltId: null }, { ...ctx, isPostMerge: true }).lines.find(l => l.slot === 'immunity')!;
   check('Immunity pick who leaves takes −5 post-merge too', postImm.penalty === -5, postImm.reason);
+
+  // Rules versions (spec §4.5): Going Home all-or-nothing from v2; v1 must never change.
+  const v2: ScoringContext = { ...ctx, rulesVersion: 2 };
+  const ghLine = (main: string, c: ScoringContext, chip: CardInput['chip'] = null, alt: string | null = null) =>
+    scoreCard({ picks: { reward: null, immunity: null, going_home: idByName(main), mop: null }, titlePickId: null, chip, chipSlot: chip ? 'going_home' : null, hedgeAltId: alt ? idByName(alt) : null }, c)
+      .lines.find(l => l.slot === 'going_home')!;
+  for (const [n, want1, want2] of [['Aaliyah', 7, 7], ['Rob', 6, 0], ['Mike', 1, 0]] as const) {
+    const a = ghLine(n, ctx), b = ghLine(n, v2);
+    check(`Going Home ${n}: ${want1} under v1, ${want2} under v2`, a.total === want1 && b.total === want2, `v1 ${a.total} (${a.reason}) · v2 ${b.total} (${b.reason})`);
+  }
+  const noBoot = (c: ScoringContext): ScoringContext => ({ ...c, outcomes: { ...c.outcomes, departures: [] } });
+  const nb1 = ghLine('Rob', noBoot(ctx)), nb2 = ghLine('Rob', noBoot(v2));
+  check('Nobody leaves: Going Home scores base under v1 (Rob 6), 0 under v2', nb1.total === 6 && nb2.total === 0, `${nb1.total} · ${nb2.total} ${nb2.reason}`);
+  const pmImm = ghLine('Rob', { ...v2, isPostMerge: true });
+  check('v2 post-merge: Going Home pick who wins immunity = 0 − 5 = −5', pmImm.total === -5 && pmImm.penalty === -5, pmImm.reason);
+  const chipCtx: ScoringContext = { ...v2, episode: 2 };   // chips only apply E2–E12
+  const td = ghLine('Aaliyah', chipCtx, 'triple_down'), tdMiss = ghLine('Rob', chipCtx, 'triple_down');
+  check('v2 Triple Down on Going Home: hit = base ×3 + 5 (Aaliyah 8), miss = 0', td.total === 8 && tdMiss.total === 0, `${td.total} · ${tdMiss.total}`);
+  const hedgeHit = ghLine('Rob', chipCtx, 'hedge', 'Aaliyah'), hedgeMiss = ghLine('Rob', chipCtx, 'hedge', 'Mike');
+  check('v2 Hedge on Going Home: either pick departing hits (7); neither = 0', hedgeHit.total === 7 && hedgeHit.survivorId === idByName('Aaliyah') && hedgeMiss.total === 0, `${hedgeHit.total} · ${hedgeMiss.total}`);
 
   return { success: checks.every(c => c.pass), passed: checks.filter(c => c.pass).length, total: checks.length, checks };
 }

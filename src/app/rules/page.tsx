@@ -87,7 +87,8 @@ export default function RulesPage() {
             <Row left="Your survivor's FSG points for the episode" right="base" color="rgba(255,255,255,0.8)" />
             <Row left="Slot hits (the survivor did the thing the slot asks for)" right="base × 2" color="#4ade80" />
             <Row left={`${slot('going_home').label} hits`} right={`base × 2, +${SLOT_BONUS_GOING_HOME}`} color="#4ade80" />
-            <Row left="Slot misses" right="base only" color="rgba(255,255,255,0.8)" />
+            <Row left={`${slot('going_home').label} misses — it's all-or-nothing`} right="0" color="rgba(255,255,255,0.8)" />
+            <Row left="Any other slot misses" right="base only" color="rgba(255,255,255,0.8)" />
           </Box>
 
           <p className="mt-4 mb-1.5">{b('Penalties')} — they change once the merge has aired:</p>
@@ -100,9 +101,10 @@ export default function RulesPage() {
           <Rule>Why the split: pre-merge, tribe immunity covers about half the cast, so penalising a Going Home pick who &ldquo;won immunity&rdquo; would be a coin flip. Post-merge it&apos;s individual immunity and a real read.</Rule>
           <Rule>Post-merge rules start with the episode {b('after')} the merge airs, never the merge episode itself — picks lock before it airs, so nobody is scored under a rule they couldn&apos;t see. Your pick card always says which rules are live.</Rule>
           <Rule>Penalties are uncapped — a multi-boot week can stack them. {b('Card totals can be negative.')}</Rule>
-          <Rule>{b('No-event rule:')} if there was no reward challenge, the Reward slot scores base points only — no double, no penalty. The same goes for Immunity with no immunity challenge, MOP if nobody scored Other points, and Going Home if nobody leaves the game (base only, no double, no bonus).</Rule>
+          <Rule>{b('No-event rule:')} if there was no reward challenge, the Reward slot scores base points only — no double, no penalty. The same goes for Immunity with no immunity challenge, and MOP if nobody scored Other points. If nobody leaves the game, every Going Home slot scores 0.</Rule>
           <Rule>{b('Most Other Points')} counts every FSG action that isn&apos;t a reward or immunity challenge win (e.g. tree mail, finding an idol). Ties pay everyone tied.</Rule>
-          <Rule>{b('Going Home')} pays if your pick leaves for any reason — voted out, quit, or medically evacuated.</Rule>
+          <Rule>{b('Going Home')} pays if your pick leaves for any reason — voted out, quit, or medically evacuated. A wrong pick scores 0, so it&apos;s a pure read on who&apos;s going, not a fifth scoring slot. Post-merge, a Going Home pick who wins immunity is still penalised: {`0 − ${Math.abs(PENALTY_GOING_HOME_IMMUNE)} = ${PENALTY_GOING_HOME_IMMUNE}`}.</Rule>
+          <Rule>Rule changes never rewrite the past: episodes scored before a change keep their original results. Each score breakdown shows the rules version it was scored under.</Rule>
           <Rule>Commissioner adjustments are added to a slot and are never multiplied.</Rule>
           <Rule>No card submitted = 0 for the week (you still play your fixture).</Rule>
           <Rule>The card runs episodes 2–12 only. There is no card in the finale.</Rule>
