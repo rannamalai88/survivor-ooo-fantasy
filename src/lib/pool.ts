@@ -88,3 +88,14 @@ export function walkPool(
 
   return { status, weeksSurvived, drownedEpisode, idolUsed, idolEpisode, weeks };
 }
+
+/**
+ * True when the walk drowned this manager in `episode` for having no pool pick —
+ * i.e. they were Active going into the episode and submitted nothing. Used by the
+ * admin Advance button's auto-drown. A manager who was Drowned going in (and so
+ * could only make a backdoor pick) is never "missed", even if their backdoor hit
+ * that episode and made them Active again.
+ */
+export function missedPoolPick(walk: PoolWalkResult, episode: number): boolean {
+  return walk.weeks.some(w => w.episode === episode && w.type === 'missed');
+}

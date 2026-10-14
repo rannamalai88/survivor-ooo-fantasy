@@ -7,6 +7,7 @@ import AuthGuard from '@/components/auth/AuthGuard';
 import { Card, Button, Segmented, TribeTag, cn } from '@/components/ui';
 import { SEASON_ID, SEASON_NUMBER } from '@/lib/constants';
 import { formatRank } from '@/lib/utils';
+import { walkPool, missedPoolPick, POOL_FIRST_EPISODE, type PoolPick, type PoolSurvivor } from '@/lib/pool';
 
 // ============================================================
 // Types
@@ -279,17 +280,34 @@ function AdminContent() {
     const next = currentEpisode + 1;
     setError(null);
     try {
-      // Auto-drown active pool managers who missed their pool pick. The Pool starts
-      // at E2, so there is nothing to check when leaving E1.
+      // Auto-drown pool managers who were Active going into this episode and made no
+      // pool pick. Decided by the same walk Calculate uses (lib/pool.ts), never by the
+      // stored status alone: a manager whose backdoor hit THIS episode is Active in
+      // pool_status but could only have made a backdoor pick, so they are not "missed".
+      // Only runs once the episode has locked (picks are only read for locked episodes).
       let missed: { id: string; name: string }[] = [];
-      if (currentEpisode >= 2) {
-        const { data: activePool } = await supabase.from('pool_status').select('manager_id').eq('season_id', SEASON_ID).eq('status', 'active');
-        const activeIds = (activePool || []).map((r: any) => r.manager_id);
-        if (activeIds.length) {
-          const { data: submitted } = await supabase.from('weekly_picks').select('manager_id')
-            .eq('season_id', SEASON_ID).eq('episode', currentEpisode).not('pool_pick_id', 'is', null).in('manager_id', activeIds);
-          const got = new Set((submitted || []).map((r: any) => r.manager_id));
-          missed = activeIds.filter((id: string) => !got.has(id)).map((id: string) => ({ id, name: managers.find(m => m.id === id)?.name || id }));
+      if (currentEpisode >= POOL_FIRST_EPISODE) {
+        const { data: ep } = await supabase.from('episodes').select('lock_at').eq('season_id', SEASON_ID).eq('number', currentEpisode).maybeSingle();
+        if (ep?.lock_at && new Date(ep.lock_at) <= new Date()) {
+          const [poolRes, survRes, picksRes] = await Promise.all([
+            supabase.from('pool_status').select('manager_id, status, has_immunity_idol').eq('season_id', SEASON_ID),
+            supabase.from('survivors').select('id, is_active, eliminated_episode').eq('season_id', SEASON_ID),
+            supabase.from('weekly_picks').select('manager_id, episode, pool_pick_id, pool_backdoor_id')
+              .eq('season_id', SEASON_ID).gte('episode', POOL_FIRST_EPISODE).lte('episode', currentEpisode),
+          ]);
+          for (const r of [poolRes, survRes, picksRes]) if (r.error) throw r.error;
+          const survivorMap = new Map((survRes.data || []).map((s: any) => [s.id, s as PoolSurvivor]));
+          for (const row of poolRes.data || []) {
+            if (row.status !== 'active') continue;   // already drowned (e.g. by Calculate) or burnt
+            const byEp: Record<number, PoolPick> = {};
+            for (const p of (picksRes.data || []).filter((x: any) => x.manager_id === row.manager_id)) {
+              byEp[p.episode] = { pool_pick_id: p.pool_pick_id, pool_backdoor_id: p.pool_backdoor_id };
+            }
+            const walk = walkPool(byEp, survivorMap, !!row.has_immunity_idol, currentEpisode);
+            if (missedPoolPick(walk, currentEpisode)) {
+              missed.push({ id: row.manager_id, name: managers.find(m => m.id === row.manager_id)?.name || row.manager_id });
+            }
+          }
         }
       }
 
@@ -300,7 +318,7 @@ function AdminContent() {
 
       setBusy('advance');
       if (missed.length) {
-        const { error } = await supabase.from('pool_status').update({ status: 'drowned' })
+        const { error } = await supabase.from('pool_status').update({ status: 'drowned', drowned_episode: currentEpisode })
           .eq('season_id', SEASON_ID).in('manager_id', missed.map(m => m.id));
         if (error) throw error;
         await logActivity('pool', `Auto-drowned for missing episode ${currentEpisode} pool pick: ${missed.map(m => m.name).join(', ')}`);

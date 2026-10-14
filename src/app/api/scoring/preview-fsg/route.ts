@@ -12,7 +12,7 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { SEASON_ID, eliminationOrderFromPlace, placeFromEliminationOrder } from '@/lib/constants';
 import { loadFSG, summaryIssues, toEpisodeEvents } from '@/lib/fsg-load';
 import { fetchFSGRecapPage, parseRecap } from '@/lib/fsg-parser';
-import { walkPool } from '@/lib/pool';
+import { walkPool, missedPoolPick } from '@/lib/pool';
 import { deriveOutcomes, scoreCard, resolveFixture, rankAndShare, scoreQuinfecta, type ScoringContext, type EpisodeEvent, type CardInput } from '@/lib/scoring';
 
 export const dynamic = 'force-dynamic';
@@ -104,6 +104,11 @@ async function runSelfTest(loaded: Awaited<ReturnType<typeof loadFSG>>, nameOf: 
   check('Pool: missed pick drowns, idol does not cover it', pw3.status === 'drowned' && pw3.drownedEpisode === 3 && !pw3.idolUsed, JSON.stringify(pw3));
   const pw4 = walkPool({ 2: pk('z'), 3: pk('x'), 4: pk(null, 'y'), 5: pk('z') }, sv, false, 5);
   check('Pool: correct backdoor reactivates without incrementing', pw4.status === 'active' && pw4.weeksSurvived === 2 && pw4.weeks[2].type === 'backdoor_hit', JSON.stringify(pw4));
+  // Advance auto-drown (admin): only Active-going-in managers with no pool pick
+  const pw5 = walkPool({ 2: pk('z'), 3: pk('x'), 4: pk(null, 'y') }, sv, false, 4);
+  check('Advance: backdoor hit this episode is not a missed pool pick (Hari, E3)', pw5.status === 'active' && !missedPoolPick(pw5, 4), JSON.stringify(pw5));
+  const pw6 = walkPool({ 2: pk('z') }, sv, false, 3);
+  check('Advance: Active manager with no pool pick is a missed pick', missedPoolPick(pw6, 3) && !missedPoolPick(pw6, 2), JSON.stringify(pw6));
 
   // Finale + edge cases, parsed from the complete S50 recap (known outcomes)
   try {
