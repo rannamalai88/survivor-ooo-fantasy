@@ -107,7 +107,7 @@ Rules:
 
 Run migrations by hand in the Supabase SQL editor. There is no migration tooling. The checked-in `001` schema is stale; S51 tables and columns are in `002`–`005`; `007` adds titles and merge flags; `008` adds `episodes.rules_version` (E1–E2 = 1, E3–E13 = 2). S51 derived tables: `episode_events`, `episode_outcomes`, `score_lines`, `h2h_results`; scoring columns on `manager_scores` / `manager_totals`. Retired S50 columns (captain, swaps, `chip_played`, `net_pick_id`, `grand_total`, …) are kept for history and not written, except `fantasy_points`, `grand_total` and `pool_score`, which `calculate` still fills for continuity.
 
-`survivors.tribe` has a CHECK constraint (`Vatu, Kalo, Cila, Savu, Toka, Merge, Host`). If FSG names the merged tribe something else, scrape warns; extend the constraint, then re-pull.
+`survivors.tribe` has a CHECK constraint (`Vatu, Kalo, Cila, Savu, Toka, Dina, Merge, Host`; Dina added for the E4 three-tribe swap, migration 009) mirrored by `ALLOWED_TRIBES` in `scrape-fsg` — change both together. If FSG names the merged tribe something else, scrape warns; extend the constraint, then re-pull.
 
 When changing the schema, write the SQL for the user to run **and** add it as a new numbered migration file so the repo catches up over time.
 
@@ -117,7 +117,7 @@ Next.js `images.remotePatterns` allows survivor photos from `www.fantasysurvivor
 
 ## S51 facts
 
-Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051`. 13 episodes (dates in `episodes`; correct the table, not the code, if CBS shifts the schedule). 21 castaways, FSG ids 536–556, plus Jeff (`cast_id` 99, `is_playable = false`, Title slot only). Tribes Savu / Toka; merge colour unknown until it airs. E7 = Couples Week (round 6), E12 = Rivalry Week (round 11). Alli holds the Dynasty Idol.
+Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051`. 13 episodes (dates in `episodes`; correct the table, not the code, if CBS shifts the schedule). 21 castaways, FSG ids 536–556, plus Jeff (`cast_id` 99, `is_playable = false`, Title slot only). Tribes Savu / Toka; E4 swap added a third tribe, Dina (no colour token yet — shows neutral grey); merge colour unknown until it airs. E7 = Couples Week (round 6), E12 = Rivalry Week (round 11). Alli holds the Dynasty Idol.
 
 ## Open items
 

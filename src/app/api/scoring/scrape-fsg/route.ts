@@ -26,7 +26,7 @@ import { deriveOutcomes } from '@/lib/scoring';
 export const dynamic = 'force-dynamic';
 
 // Must match the survivors_tribe_check constraint in the live database.
-const ALLOWED_TRIBES = ['Vatu', 'Kalo', 'Cila', 'Savu', 'Toka', 'Merge', 'Host'];
+const ALLOWED_TRIBES = ['Vatu', 'Kalo', 'Cila', 'Savu', 'Toka', 'Dina', 'Merge', 'Host'];
 
 export async function POST(request: NextRequest) {
   try {
