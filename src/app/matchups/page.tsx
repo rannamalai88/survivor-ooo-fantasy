@@ -24,7 +24,7 @@ interface Pick {
   pool_pick_id: string | null; pool_backdoor_id: string | null;
 }
 interface Line { manager_id: string; slot: string; survivor_id: string | null; total: number; multiplier: number }
-interface Score { manager_id: string; card_total: number | null; h2h_points: number | null }
+interface Score { manager_id: string; card_total: number | null; h2h_points: number | null; chip: string | null }
 
 const COL: Record<RosterSlot, keyof Pick> = { reward: 'reward_pick_id', immunity: 'immunity_pick_id', going_home: 'going_home_pick_id', mop: 'mop_pick_id' };
 const SHORT: Record<string, string> = { reward: 'Reward', immunity: 'Immunity', going_home: 'Going home', mop: 'MOP', title: 'Title' };
@@ -72,7 +72,7 @@ function MatchupsContent() {
         const [{ data: p }, { data: l }, { data: s }, fx] = await Promise.all([
           supabase.from('weekly_picks').select('manager_id, reward_pick_id, immunity_pick_id, going_home_pick_id, mop_pick_id, title_pick_id, chip, chip_slot, hedge_alt_id, pool_pick_id, pool_backdoor_id').eq('season_id', SEASON_ID).eq('episode', ep.number),
           supabase.from('score_lines').select('manager_id, slot, survivor_id, total, multiplier').eq('season_id', SEASON_ID).eq('episode', ep.number),
-          supabase.from('manager_scores').select('manager_id, card_total, h2h_points').eq('season_id', SEASON_ID).eq('episode', ep.number),
+          supabase.from('manager_scores').select('manager_id, card_total, h2h_points, chip').eq('season_id', SEASON_ID).eq('episode', ep.number),
           fxP,
         ]);
         setPicks((p || []) as Pick[]);
@@ -206,6 +206,9 @@ function MatchupsContent() {
                 const sa = scores.find(s => s.manager_id === a)?.card_total ?? null;
                 const sb = b ? scores.find(s => s.manager_id === b)?.card_total ?? null : null;
                 const winA = scored && sa !== null && sb !== null && sa > sb, winB = scored && sa !== null && sb !== null && sb > sa;
+                // Point Shield: that manager's loss is recorded as a draw (the opponent still wins)
+                const shieldedOf = (id: string | undefined, lost: boolean) => !!id && lost && scores.find(s => s.manager_id === id)?.chip === 'point_shield';
+                const shieldA = shieldedOf(a, winB), shieldB = shieldedOf(b, winA);
                 const mine = g.includes(manager?.id || '');
                 return (
                   <Card key={g.join('-')} padded={false} className={cn(mine && 'ring-2 ring-accent/40')}>
@@ -214,12 +217,14 @@ function MatchupsContent() {
                       {[a, b].filter(Boolean).map((id, i) => {
                         const total = i === 0 ? sa : sb;
                         const won = i === 0 ? winA : winB;
+                        const shielded = i === 0 ? shieldA : shieldB;
                         return (
                           <Link key={id} href={scored ? `/breakdown/${id}/${ep.number}` : `/managers/${id}`} className={cn('flex-1 min-w-0 flex items-center gap-2', i === 1 && 'flex-row-reverse text-right')}>
                             <ManagerAvatar name={nameOf(id!)} size={30} me={id === manager?.id} />
                             <div className="min-w-0">
                               <div className={cn('text-sm truncate', won ? 'font-bold text-ink' : 'font-semibold text-ink')}>{nameOf(id!)}</div>
                               {won && <div className="text-[10px] font-bold text-positive">WIN</div>}
+                              {shielded && <div className="text-[10px] font-bold text-muted" title="Point Shield turned the loss into a draw">DRAW · 🧱 POINT SHIELD</div>}
                             </div>
                             {scored && total !== null && <div className={cn('text-2xl font-bold tracking-tight num ml-auto', i === 1 && 'ml-0 mr-auto', total < 0 ? 'text-negative' : won ? 'text-ink' : 'text-muted')}>{total}</div>}
                           </Link>

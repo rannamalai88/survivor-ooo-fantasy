@@ -112,7 +112,10 @@ function BreakdownContent() {
   const theirScore = h2h ? (iAmA ? h2h.score_b : h2h.score_a) : null;
   const myPoints = h2h ? (iAmA ? h2h.points_a : h2h.points_b) : null;
   const myChip = h2h ? (iAmA ? h2h.chip_a : h2h.chip_b) : null;
-  const result = myScore === null || theirScore === null ? null : myScore > theirScore ? 'Win' : myScore < theirScore ? 'Loss' : 'Draw';
+  const cardResult = myScore === null || theirScore === null ? null : myScore > theirScore ? 'Win' : myScore < theirScore ? 'Loss' : 'Draw';
+  // Point Shield turns a loss into a draw, and the record says so.
+  const shielded = cardResult === 'Loss' && myChip === 'point_shield';
+  const result = shielded ? 'Draw' : cardResult;
 
   const prevEp = [...scoredEpisodes].reverse().find(e => e < episode);
   const nextEp = scoredEpisodes.find(e => e > episode);
@@ -166,7 +169,7 @@ function BreakdownContent() {
               </div>
               <div className="text-sm text-muted mt-0.5 num">{myScore}–{theirScore} · <b className="text-accent">{myPoints} pt{myPoints === 1 ? '' : 's'}</b>
                 {myChip === 'double_fixture' && ' · Double Fixture doubled it'}
-                {myChip === 'point_shield' && result === 'Loss' && ' · Point Shield made it a draw'}
+                {shielded && ' · 🧱 Point Shield turned the loss into a draw'}
               </div>
               <Link href={`/breakdown/${opponentId}/${episode}`} className="inline-block text-sm font-medium text-accent mt-1.5">See {mgrName(opponentId!)}&apos;s card</Link>
             </>) : <div className="text-sm text-muted mt-1.5">No fixture this episode.</div>}

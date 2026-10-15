@@ -11,7 +11,8 @@ export interface MatchResult {
   opponentName: string;
   myCard: number;
   theirCard: number;
-  result: 'W' | 'D' | 'L';
+  result: 'W' | 'D' | 'L';    // the record: a loss under Point Shield is recorded as a draw
+  cardResult: 'W' | 'D' | 'L'; // the card comparison alone, before Point Shield
   h2hPoints: number;          // after chips
   chip: string | null;
 }
@@ -40,7 +41,7 @@ export interface StandingRow {
   shadowBeat: number;                // all-play: other managers outscored, summed over episodes
   shadowGames: number;               // all-play: other managers faced, summed over episodes
   expectedWins: number;              // Σ shadow_beat / (n − 1) over played fixtures
-  luck: number;                      // (W + ½D) − expectedWins
+  luck: number;                      // (card W + ½ card D) − expectedWins — chips aren't luck
   rankHistory: { episode: number; rank: number }[];   // H2H table rank after each scored episode
   weeksSurvived: number;
   poolStatus: string;
@@ -124,16 +125,21 @@ async function fetchStandings(): Promise<Standings> {
       const mine = isA ? r.score_a : r.score_b;
       const theirs = isA ? r.score_b : r.score_a;
       const oppId = isA ? f.manager_b : f.manager_a;
+      const chip = isA ? r.chip_a : r.chip_b;
+      const cardResult: 'W' | 'D' | 'L' = mine > theirs ? 'W' : mine < theirs ? 'L' : 'D';
       matchResults.push({
         episode: r.episode, opponentId: oppId, opponentName: nameOf(oppId), myCard: mine, theirCard: theirs,
-        result: mine > theirs ? 'W' : mine < theirs ? 'L' : 'D',
-        h2hPoints: isA ? r.points_a : r.points_b, chip: isA ? r.chip_a : r.chip_b,
+        result: cardResult === 'L' && chip === 'point_shield' ? 'D' : cardResult,
+        cardResult,
+        h2hPoints: isA ? r.points_a : r.points_b, chip,
       });
       const beat = (scores as any[]).find(s => s.manager_id === m.id && s.episode === r.episode)?.shadow_beat || 0;
       if (n > 1) expectedWins += beat / (n - 1);
     }
     const won = matchResults.filter(x => x.result === 'W').length;
     const drawn = matchResults.filter(x => x.result === 'D').length;
+    const cardWon = matchResults.filter(x => x.cardResult === 'W').length;
+    const cardDrawn = matchResults.filter(x => x.cardResult === 'D').length;
 
     return {
       managerId: m.id,
@@ -159,7 +165,7 @@ async function fetchStandings(): Promise<Standings> {
       shadowBeat,
       shadowGames,
       expectedWins: Math.round(expectedWins * 100) / 100,
-      luck: Math.round((won + drawn / 2 - expectedWins) * 100) / 100,
+      luck: Math.round((cardWon + cardDrawn / 2 - expectedWins) * 100) / 100,
       rankHistory: [],
       weeksSurvived: pool.weeks_survived || 0,
       poolStatus: pool.status || 'active',
