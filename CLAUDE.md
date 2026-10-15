@@ -65,7 +65,7 @@ These are not optional; they exist because violating them has cost real debuggin
 
 ## Design system
 
-- Tokens (spec §7) live in `src/styles/globals.css` as RGB channels, light + dark (`prefers-color-scheme`, overridable via `data-theme` on `<html>`, applied pre-paint in `app/layout.tsx`, stored under `survivor-ooo-theme`). Tailwind maps them: `bg-canvas`, `bg-surface`, `bg-raised`, `text-ink`, `text-muted`, `text-faint`, `border-line`, `text-accent`, `bg-accent/10`, `text-positive`, `text-negative`, `text-warn`, `bg-savu`/`bg-toka`. **Never hardcode hex or `white/…` classes in pages** — every page must work in both themes.
+- Tokens (spec §7) live in `src/styles/globals.css` as RGB channels, light + dark (`prefers-color-scheme`, overridable via `data-theme` on `<html>`, applied pre-paint in `app/layout.tsx`, stored under `survivor-ooo-theme`). Tailwind maps them: `bg-canvas`, `bg-surface`, `bg-raised`, `text-ink`, `text-muted`, `text-faint`, `border-line`, `text-accent`, `bg-accent/10`, `text-positive`, `text-negative`, `text-warn`, `bg-savu`/`bg-toka`/`bg-dina`. **Never hardcode hex or `white/…` classes in pages** — every page must work in both themes.
 - Tribe colours are identity only (`tribeColor()` in `components/ui`); blue is the only interactive colour; yellow is never a warning.
 - Components: `components/ui` (Page, PageHeader, Card, Badge, Button, Segmented, SurvivorAvatar, ManagerAvatar, TribeTag, StatTile, ResultPill, Skeleton, EmptyState, Callout), `components/ui/icons`, `components/charts` (EpisodeBars, RankLines, Sparkline — plain SVG; highlight/context colours `--c-chart-hi`/`--c-chart-ctx` were validated with the dataviz palette checker).
 - Shell: `components/layout/Nav.tsx` (top bar + phone bottom tab bar; nav items in `nav-config.tsx`). Sticky page footers must sit at `bottom: var(--tabbar-h)`.
@@ -117,7 +117,7 @@ Next.js `images.remotePatterns` allows survivor photos from `www.fantasysurvivor
 
 ## S51 facts
 
-Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051`. 13 episodes (dates in `episodes`; correct the table, not the code, if CBS shifts the schedule). 21 castaways, FSG ids 536–556, plus Jeff (`cast_id` 99, `is_playable = false`, Title slot only). Tribes Savu / Toka; E4 swap added a third tribe, Dina (no colour token yet — shows neutral grey); merge colour unknown until it airs. E7 = Couples Week (round 6), E12 = Rivalry Week (round 11). Alli holds the Dynasty Idol.
+Season 51 — "The Open Era." `seasons.id` `550e8400-e29b-41d4-a716-446655440051`. 13 episodes (dates in `episodes`; correct the table, not the code, if CBS shifts the schedule). 21 castaways, FSG ids 536–556, plus Jeff (`cast_id` 99, `is_playable = false`, Title slot only). Tribes Savu / Toka; E4 swap added a third tribe, Dina (`#e94677`, tokens `--c-dina` / `--c-dina-on`; dark ink on the fill — white is only 3.7:1); merge colour unknown until it airs. E7 = Couples Week (round 6), E12 = Rivalry Week (round 11). Alli holds the Dynasty Idol.
 
 ## Open items
 

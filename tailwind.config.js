@@ -29,6 +29,8 @@ module.exports = {
         'savu-on': token('savu-on'),
         toka: token('toka'),
         'toka-on': token('toka-on'),
+        dina: token('dina'),
+        'dina-on': token('dina-on'),
       },
       boxShadow: {
         card: 'var(--shadow-card)',

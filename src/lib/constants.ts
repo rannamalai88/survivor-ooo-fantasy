@@ -33,6 +33,7 @@ export const H2H_POINTS = { win: 3, draw: 1, loss: 0 } as const;
 export const TRIBE_COLORS: Record<string, string> = {
   Savu: '#8b2bc0',
   Toka: '#f0c624',
+  Dina: '#e94677',
   Vatu: '#9B59B6',
   Kalo: '#1ABC9C',
   Cila: '#E67E22',
