@@ -97,14 +97,16 @@ export default function PoolPage() {
 
       {loading ? <Skeleton className="h-80 w-full" /> : (
         <div className="grid gap-4 lg:grid-cols-3">
-          <Card padded={false} className="lg:col-span-2 overflow-x-auto">
+          <Card padded={false} className="lg:col-span-2 min-w-0">
             <div className="px-4 pt-4 sm:px-5"><CardHeader title="The board" subtitle={season && lockedEps.length === 0 ? 'Picks appear here once Episode 2 locks.' : `Picks for Episode ${season?.current_episode} appear when they lock`} /></div>
-            <table className="data-table">
-              <thead><tr><th>Manager</th><th>Status</th>{shownEps.map(e => <th key={e.number} className="text-center">E{e.number}</th>)}<th className="text-right">Weeks</th><th className="text-right">Champ</th></tr></thead>
+            {/* Only the table scrolls sideways; the Manager column stays frozen */}
+            <div className="overflow-x-auto">
+            <table className="data-table border-separate border-spacing-0">
+              <thead><tr><th className="sticky-col">Manager</th><th>Status</th>{shownEps.map(e => <th key={e.number} className="text-center">E{e.number}</th>)}<th className="text-right">Weeks</th><th className="text-right">Champ</th></tr></thead>
               <tbody>
                 {board.map(({ m, status, walk, hasIdol }) => (
-                  <tr key={m.id} className={cn(m.id === manager?.id && 'bg-accent/[0.07]')}>
-                    <td>
+                  <tr key={m.id} className={cn(m.id === manager?.id && 'row-me bg-accent/[0.07]')}>
+                    <td className="sticky-col">
                       <Link href={`/managers/${m.id}`} className="flex items-center gap-2 hover:underline decoration-line underline-offset-4">
                         <ManagerAvatar name={m.name} size={24} me={m.id === manager?.id} />
                         <span className="font-medium text-ink">{m.name}</span>
@@ -132,6 +134,7 @@ export default function PoolPage() {
                 ))}
               </tbody>
             </table>
+            </div>
             <div className="px-4 sm:px-5 py-3 border-t border-line text-xs text-muted flex flex-wrap gap-x-4 gap-y-1">
               <span>✓ safe</span><span>💀 drowned / no pick</span><span>🛡️ idol save</span><span>↩ backdoor hit</span><span>🚪 backdoor miss</span>
             </div>

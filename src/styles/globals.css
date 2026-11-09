@@ -134,6 +134,14 @@ body {
   .data-table tbody tr:last-child td { @apply border-b-0; }
   .data-table tbody tr:hover td { background: rgb(var(--c-raised) / 0.5); }
 
+  /* Frozen first column for wide tables that scroll sideways. The cell needs an
+     opaque background (surface, plus any row tint layered on top) so scrolled
+     cells pass underneath. Use with `border-separate border-spacing-0` on the
+     table — collapsed borders don't stick. */
+  .data-table .sticky-col { position: sticky; left: 0; z-index: 1; background: rgb(var(--c-surface)); box-shadow: inset -1px 0 0 rgb(var(--c-line)); }
+  .data-table tbody tr.row-me td.sticky-col { background: linear-gradient(rgb(var(--c-accent) / 0.07), rgb(var(--c-accent) / 0.07)), rgb(var(--c-surface)); }
+  .data-table tbody tr:hover td.sticky-col { background: linear-gradient(rgb(var(--c-raised) / 0.5), rgb(var(--c-raised) / 0.5)), rgb(var(--c-surface)); }
+
   .skeleton { @apply rounded-md; background: linear-gradient(90deg, rgb(var(--c-raised)) 0%, rgb(var(--c-line) / 0.6) 50%, rgb(var(--c-raised)) 100%); background-size: 200% 100%; animation: skeleton 1.3s ease-in-out infinite; }
 }
 
