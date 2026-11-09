@@ -18,12 +18,14 @@ export function tribeColor(tribe: string | null | undefined): string {
   if (tribe === 'Savu') return 'rgb(var(--c-savu))';
   if (tribe === 'Toka') return 'rgb(var(--c-toka))';
   if (tribe === 'Dina') return 'rgb(var(--c-dina))';
+  if (tribe === 'Tovuto') return 'rgb(var(--c-tovuto))';
   return (tribe && TRIBE_COLORS[tribe]) || 'rgb(var(--c-faint))';
 }
 /** Text colour that reads on a solid tribe fill. */
 export function tribeOnColor(tribe: string | null | undefined): string {
   if (tribe === 'Toka') return 'rgb(var(--c-toka-on))';
   if (tribe === 'Dina') return 'rgb(var(--c-dina-on))';
+  if (tribe === 'Tovuto') return 'rgb(var(--c-tovuto-on))';
   return '#fff';
 }
 
@@ -63,7 +65,7 @@ export function CardHeader({ title, subtitle, action, className }: { title: Reac
 }
 
 // ---- Controls --------------------------------------------------------------------
-type Tone = 'neutral' | 'accent' | 'positive' | 'negative' | 'warn' | 'savu' | 'toka' | 'dina';
+type Tone = 'neutral' | 'accent' | 'positive' | 'negative' | 'warn' | 'savu' | 'toka' | 'dina' | 'tovuto';
 const TONES: Record<Tone, string> = {
   neutral: 'bg-raised text-muted',
   accent: 'bg-accent/10 text-accent',
@@ -73,6 +75,7 @@ const TONES: Record<Tone, string> = {
   savu: 'bg-savu text-savu-on',
   toka: 'bg-toka text-toka-on',
   dina: 'bg-dina text-dina-on',
+  tovuto: 'bg-tovuto text-tovuto-on',
 };
 
 export function Badge({ children, tone = 'neutral', className, title }: { children: React.ReactNode; tone?: Tone; className?: string; title?: string }) {

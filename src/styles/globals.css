@@ -29,6 +29,8 @@
   --c-toka-on: 22 22 26;
   --c-dina: 233 70 119;
   --c-dina-on: 22 22 26;
+  --c-tovuto: 65 105 226;
+  --c-tovuto-on: 255 255 255;
   --c-chart-hi: 11 127 174;      /* highlighted series (validated vs context) */
   --c-chart-ctx: 196 198 204;    /* de-emphasised context series */
   --shadow-card: 0 1px 2px rgb(16 18 24 / 0.04), 0 1px 1px rgb(16 18 24 / 0.03);
@@ -58,6 +60,8 @@
     --c-toka-on: 22 22 26;
     --c-dina: 233 70 119;
     --c-dina-on: 22 22 26;
+    --c-tovuto: 65 105 226;
+    --c-tovuto-on: 255 255 255;
     --c-chart-hi: 5 169 230;
     --c-chart-ctx: 80 85 94;
     --shadow-card: 0 0 0 1px rgb(0 0 0 / 0);
@@ -86,6 +90,8 @@
   --c-toka-on: 22 22 26;
   --c-dina: 233 70 119;
   --c-dina-on: 22 22 26;
+  --c-tovuto: 65 105 226;
+  --c-tovuto-on: 255 255 255;
   --c-chart-hi: 5 169 230;
   --c-chart-ctx: 80 85 94;
   --shadow-card: 0 0 0 1px rgb(0 0 0 / 0);
